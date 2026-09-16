@@ -1,0 +1,43 @@
+[project]
+name = "drillable-pnl-dash"
+version = "0.1.0"
+description = "Drillable P&L — FC forecast dashboard with collapsible sections, 3 grains, and vintage comparison."
+requires-python = ">=3.11"
+dependencies = [
+    # 1.57 is the floor for st.components.v2, which the clickable section
+    # headers in interactive.py require. The global interpreter on this machine
+    # carries 1.48, so this project MUST run from its own .venv -- a UI check on
+    # 1.48 is a false pass, not a warning.
+    "streamlit>=1.57",
+    "snowflake-snowpark-python",
+    # Explicit on purpose. streamlit[snowflake] gates the connector on
+    # python_version < "3.12" and this machine is 3.12.7, so relying on the
+    # extra would silently skip it and fail at import with "No module named
+    # 'snowflake'".
+    "snowflake-connector-python",
+    "pandas>=2.0",
+    "altair>=5",
+    # zoneinfo is stdlib but reads an OS tz database a slim container image may
+    # not ship; this guarantees America/Los_Angeles resolves for the
+    # data-pulled timestamp.
+    "tzdata",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+# Flat-layout app (not a library): declare modules explicitly so an editable
+# install does not fail auto-discovery with "Multiple top-level modules
+# discovered".
+[tool.setuptools]
+py-modules = [
+    "streamlit_app",
+    "queries",
+    "data",
+    "transforms",
+    "table",
+    "interactive",
+    "style",
+    "charts",
+]

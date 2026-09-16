@@ -1,0 +1,79 @@
+# Snowflake CLI project definition -- deploys the Drillable P&L dashboard to
+# Streamlit-in-Snowflake on the SPCS CONTAINER runtime.
+#
+# Container runtime, not warehouse, for two reasons: it installs deps from PyPI
+# via uv (reading pyproject.toml), which is how we get Streamlit >= 1.57 and
+# therefore st.components.v2 for the clickable section headers; and the
+# warehouse runtime caps out below that.
+#
+#   snow --version >= 3.14        # container runtime needs definition_version 2
+#   cd drillable-pnl-dash         # the folder with streamlit_app.py
+#   snow streamlit deploy drillable_pnl_dash --replace --role POWER_ANALYST_ORACLE_PROD
+#
+# DEPLOYED 2026-09-14 as VERSION$1 -- shipped deliberately WITH a known caveat.
+# The Compensation fix has since been applied (see below), so VERSION$1 is STALE:
+# redeploy before trusting any Gross Margin or EBITDA figure in the live app.
+#
+# Current state: revenue reconciles to the deck exactly. No cost row does. The
+# 19 cost rows are corrected for the source's ACX_Compensation double-count -- it
+# is charged into ACX_Cost of Goods Sold as well as SG&A -- which closes 88-100%
+# of the Gross Margin gap and makes the forecast half of Jul. FC tie to within
+# $0.1M of EBITDA. What remains is confined to ACTUAL months (-$63.1M gross
+# margin, -$137.9M EBITDA for Jul. FC) and is unexplained by the source; raised
+# with the data team. Those rows show their live figures, and the app states no
+# caveats on screen any more: ISSUES.md is the single record, and anyone reading
+# these numbers needs it.
+#
+# SOURCE CHANGED with the fix: queries.py now reads the BASE TABLE
+# ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_BY_LOB, not CARDPLN_PL_BY_LOB_V. The view
+# inner-joins CARDPLN_PL_ACCOUNT_LAYOUT, which maps only 23 of 42 lines and so
+# drops ACX_Compensation -- the line the correction needs. Verified readable
+# under POWER_ANALYST_ORACLE_PROD with USE SECONDARY ROLES NONE, i.e. under the
+# owner's-rights identity this app deploys with.
+#
+# PREREQUISITES -- all verified present under this role at deploy time:
+#   SHOW COMPUTE POOLS LIKE 'SYSTEM_COMPUTE_POOL_CPU';            -- ACTIVE
+#   SHOW EXTERNAL ACCESS INTEGRATIONS LIKE 'pypi_access_integration';  -- enabled
+#   SELECT 1 FROM ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_BY_LOB LIMIT 1;  -- readable
+#
+# The CLI needs `pipx inject snowflake-cli keyrings.alt` on this machine or every
+# snow command dies with "No module named 'keyrings'" before any SQL runs.
+definition_version: 2
+entities:
+  drillable_pnl_dash:
+    type: streamlit
+    # Fully qualified because the FANATICS_COLLECTIBLES_PROD connection sets no
+    # default database/schema. ORACLE_DATA_PROD.SANDBOX is where
+    # POWER_ANALYST_ORACLE_PROD already owns Streamlit apps and can read
+    # FCT_EPM + use ANALYTICS_WAREHOUSE.
+    identifier:
+      name: DRILLABLE_PNL_DASH
+      database: ORACLE_DATA_PROD
+      schema: SANDBOX
+    title: "FCT — Drillable P&L (Collectibles Forecast)"
+    stage: streamlit_stage            # created automatically if absent
+    runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    # REQUIRED because pyproject.toml is in artifacts: its mere presence makes
+    # uv resolve against PyPI, which needs egress. Lowercase to match the
+    # integration's actual name in this account.
+    external_access_integrations:
+      - pypi_access_integration
+    # Executes the app's SQL. Keep in sync with data.py::_WAREHOUSE.
+    query_warehouse: ANALYTICS_WAREHOUSE
+    main_file: streamlit_app.py
+    # Every file the app opens at runtime. Anything missing here uploads as a
+    # zero-byte stage entry and kills the app on first import WITHOUT failing
+    # the deploy -- run the pre-flight check in tools/preflight_artifacts.py.
+    # tools/ is deliberately absent: dev-only harnesses do not ship.
+    artifacts:
+      - streamlit_app.py
+      - queries.py
+      - data.py
+      - transforms.py
+      - table.py
+      - interactive.py
+      - style.py
+      - charts.py
+      - pyproject.toml                # container runtime reads this for deps
+      - .streamlit/config.toml        # SiS honors the [theme] subset
