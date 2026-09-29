@@ -26,7 +26,9 @@ Nine gates:
   COMPENSATION ACX_Cost of Goods Sold == its 7 mapped children + ACX_Compensation.
                This identity is the whole justification for the correction in
                transforms._apply_compensation; if the source stops satisfying it,
-               the correction becomes wrong and this fails loudly.
+               the correction becomes wrong and this fails loudly. SKIPPED while
+               queries.APPLY_COMPENSATION_ADJUSTMENT is False (the default since
+               2026-09-29) -- with no add-back there is nothing to justify.
   COMP ADDITIV ACX_Compensation satisfies na + elim + intl == phys, which is what
                makes it safe to correct each segment independently.
   ROW 22       EBITDA Key Litigation Costs ties to the deck in exactly the
@@ -464,14 +466,23 @@ def check_parity() -> tuple[str, list[str]]:
 def check_compensation() -> tuple[int, list[str], list[str]]:
     """HARD GATE: COGS == its 7 mapped children + ACX_Compensation.
 
-    This identity is the entire justification for
-    transforms._apply_compensation. If the source ever stops satisfying it --
-    because the layout gained the missing lines, or Compensation moved -- then
-    adding Compensation back becomes wrong, and this is where we find out.
+    SKIPPED while queries.APPLY_COMPENSATION_ADJUSTMENT is False (the default
+    since 2026-09-29). This identity is the entire justification for
+    transforms._apply_compensation; with the add-back disabled there is nothing
+    for it to justify, and the source is free to break it without affecting a
+    single displayed figure. Flip the flag back to True and this gate returns.
+
+    When the adjustment IS applied: if the source ever stops satisfying the
+    identity -- because the layout gained the missing lines, or Compensation
+    moved -- then adding Compensation back becomes wrong, and this is where we
+    find out.
 
     Violations are excused only as documented offsetting pairs: both exem and
     keylit must appear for the same period and their residuals must cancel.
     """
+    if not queries.APPLY_COMPENSATION_ADJUSTMENT:
+        return 0, [], []
+
     df = _fetch_sql(COMPOSITION_SQL)
     failures: list[str] = []
     excused: list[str] = []
@@ -672,10 +683,13 @@ def main() -> None:
     failed |= bool(parity_problems)
 
     n, comp_problems, comp_excused = check_compensation()
-    print(f"COMPENSATION {'FAIL' if comp_problems else 'pass'}"
-          f"  ({n} cell(s) breaking COGS == children + Compensation)")
-    for p in comp_problems[:20]:
-        print(f"  {p}")
+    if not queries.APPLY_COMPENSATION_ADJUSTMENT:
+        print("COMPENSATION pass  (compensation adjustment disabled - skipped)")
+    else:
+        print(f"COMPENSATION {'FAIL' if comp_problems else 'pass'}"
+              f"  ({n} cell(s) breaking COGS == children + Compensation)")
+        for p in comp_problems[:20]:
+            print(f"  {p}")
     failed |= bool(comp_problems)
 
     add_comp_problems = check_comp_additivity()

@@ -10,24 +10,30 @@
 #   cd drillable-pnl-dash         # the folder with streamlit_app.py
 #   snow streamlit deploy drillable_pnl_dash --replace --role POWER_ANALYST_ORACLE_PROD
 #
-# DEPLOYED 2026-09-14 as VERSION$1 -- shipped deliberately WITH a known caveat.
-# The Compensation fix has since been applied (see below), so VERSION$1 is STALE:
-# redeploy before trusting any Gross Margin or EBITDA figure in the live app.
+# VERSION$1 was deployed 2026-09-15 (not 09-14) and was byte-identical to the
+# working copy -- verified 2026-09-29 by diffing the live stage; the earlier note
+# here claiming it predated the Compensation fix was wrong. It is stale now for a
+# different reason: it still has the add-back ENABLED. Redeploy to ship the
+# 2026-09-29 change.
 #
-# Current state: revenue reconciles to the deck exactly. No cost row does. The
-# 19 cost rows are corrected for the source's ACX_Compensation double-count -- it
-# is charged into ACX_Cost of Goods Sold as well as SG&A -- which closes 88-100%
-# of the Gross Margin gap and makes the forecast half of Jul. FC tie to within
-# $0.1M of EBITDA. What remains is confined to ACTUAL months (-$63.1M gross
-# margin, -$137.9M EBITDA for Jul. FC) and is unexplained by the source; raised
-# with the data team. Those rows show their live figures, and the app states no
-# caveats on screen any more: ISSUES.md is the single record, and anyone reading
-# these numbers needs it.
+# Current state: revenue reconciles to the deck exactly. No cost row does, and
+# the 19 cost rows now show the source's OWN ACX_Gross Margin and ACX_EBITDA --
+# queries.APPLY_COMPENSATION_ADJUSTMENT = False since 2026-09-29. The former
+# ACX_Compensation add-back was double-correcting: EPM (cube CARDPLN) is the
+# business standard and reports Q1 FY26 North America EBITDA as $195.32M, where
+# the add-back produced $244.22M, and the source's own subtotal chain already
+# reconciles (EBITDA == Gross Margin - Marketing - SG&A, to the cent). Finance
+# handles the double-count outside this app. Effect: Jul. FC Total EBITDA
+# 1,855 -> 1,410. The figures therefore sit FURTHER from the Jul 2026 FC deck
+# than before, which makes the deck's cost basis the open question, not this
+# source. The app states no caveats on screen: ISSUES.md section 0 is the single
+# record, and anyone quoting these numbers needs it.
 #
-# SOURCE CHANGED with the fix: queries.py now reads the BASE TABLE
+# SOURCE: queries.py reads the BASE TABLE
 # ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_BY_LOB, not CARDPLN_PL_BY_LOB_V. The view
 # inner-joins CARDPLN_PL_ACCOUNT_LAYOUT, which maps only 23 of 42 lines and so
-# drops ACX_Compensation -- the line the correction needs. Verified readable
+# drops ACX_Compensation -- still fetched so the flag above can be flipped back
+# with no other edit. Verified readable
 # under POWER_ANALYST_ORACLE_PROD with USE SECONDARY ROLES NONE, i.e. under the
 # owner's-rights identity this app deploys with.
 #

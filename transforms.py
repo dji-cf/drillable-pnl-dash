@@ -17,8 +17,9 @@ and four rows (10 and 18 Digital, 19 Corporate, 23 TCG) cannot be derived from
 the source at all and render as em-dashes. Every cost row shows its live figure.
 
 ISSUES.md is the full account -- including the ACX_Compensation double-count that
-_apply_compensation() below corrects, the actual-month residual it does not, and
-why row 22 stays flagged despite tying for Jul. FC.
+_apply_compensation() below can correct (disabled by default since 2026-09-29, so
+gross_margin and ebitda are the source's own ACX_ values as EPM reports them),
+and why row 22 stays flagged despite tying for Jul. FC.
 """
 from __future__ import annotations
 
@@ -528,7 +529,8 @@ class Cube:
 
 
 #: Internal cube key for queries.COMPENSATION_LINE. Never referenced by a Row --
-#: build_cube folds it into gross_margin and ebitda, then discards it.
+#: build_cube discards it, after folding it into gross_margin and ebitda only
+#: when queries.APPLY_COMPENSATION_ADJUSTMENT is True (it is False by default).
 _COMP = "_compensation"
 
 
@@ -584,8 +586,27 @@ def build_cube(df: pd.DataFrame) -> Cube:
 
 
 def _apply_compensation(segs: dict[tuple[str, str, str], dict[str, float]]) -> None:
-    """Undo the source's Compensation double-count, in place.
+    """Optionally undo the source's Compensation double-count, in place.
 
+    GATED BY queries.APPLY_COMPENSATION_ADJUSTMENT, default False (2026-09-29).
+
+    When the flag is False -- the default -- this only DISCARDS the _COMP keys
+    and returns, adding nothing. gross_margin and ebitda are then the source's
+    own ACX_Gross Margin and ACX_EBITDA, which is what EPM (cube CARDPLN)
+    reports and what the business treats as authoritative: Q1 FY26 North America
+    EBITDA is $195.32M, not the $244.22M the add-back produced. Finance handles
+    the Compensation double-count outside this app, so applying it here
+    double-corrects it.
+
+    The keys are removed rather than left in place because build_cube's contract
+    is that every key in the returned cube is a reported line; a leftover
+    _compensation entry would be a trap for the next reader (and for anything
+    that iterates the cube).
+
+    When the flag is True, the original behaviour runs unchanged, as described
+    below.
+
+    ------------------------------------------------------------------
     ACX_Cost of Goods Sold is not the sum of its seven mapped children -- it is
     those children PLUS ACX_Compensation. And Compensation is ALSO inside
     ACX_Other SG&A. Since the source computes
@@ -607,9 +628,17 @@ def _apply_compensation(segs: dict[tuple[str, str, str], dict[str, float]]) -> N
     this happened.
 
     Gated by tools/validate_vs_deck.py::check_compensation, which fails if the
-    source ever stops satisfying ``cogs == children + compensation``.
+    source ever stops satisfying ``cogs == children + compensation`` -- and which
+    is itself skipped while this flag is False.
     """
-    for key in [k for k in segs if k[1] == _COMP]:
+    comp_keys = [k for k in segs if k[1] == _COMP]
+
+    if not queries.APPLY_COMPENSATION_ADJUSTMENT:
+        for key in comp_keys:
+            del segs[key]
+        return
+
+    for key in comp_keys:
         vintage, _, pkey = key
         comp = segs.pop(key)
         for target in ("gross_margin", "ebitda"):

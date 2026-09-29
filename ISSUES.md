@@ -17,6 +17,81 @@ asserts the code side's invariants so the two cannot drift apart unnoticed.
 
 ---
 
+## 0. 2026-09-29 — Compensation add-back DISABLED
+
+`queries.APPLY_COMPENSATION_ADJUSTMENT = False`. The app now reports the
+source's own `ACX_Gross Margin` and `ACX_EBITDA`, matching **EPM cube CARDPLN**,
+which is the business standard.
+
+**Why.** The add-back described in section 2 was double-correcting. Finance
+already handles the Compensation double-count outside this app, so adding
+`ACX_Compensation` back here on top of that inflated every cost row. The
+deciding evidence, all three agreeing on the same figure:
+
+| Source | Q1 FY26 North America EBITDA |
+|---|---|
+| EPM Smart View (CARDPLN, `Total - North America Gross`, `ACX_EBITDA`, CO_31000, all other dims Total) | **195.32** |
+| `CARDPLN_PL_BY_LOB` | **195.32** |
+| `CARDPLN_PL_BY_LOB_V` | **195.32** |
+| This app, before the change | 244.22 |
+
+The +48.90 was exactly `ACX_Compensation` for that cell
+(195.3216765600 + 48.8998233100 = 244.2214998700).
+
+The source's subtotal chain is also internally consistent, which section 2
+assumed it was not — for Q1 FY26 NA:
+
+```
+Gross Margin = Net Revenue - COGS          668.8640 - 362.9056 = 305.9583  ✓ stored
+EBITDA       = GM - Marketing - SG&A       305.9583 - 10.8743 - 99.7624 = 195.3217  ✓ stored
+```
+
+So `ACX_EBITDA` needed no correction at all.
+
+**Effect.** Jul. FC Total EBITDA, as displayed ($M):
+
+| Period | Before | After | Change |
+|---|---|---|---|
+| Q1 | 237 | 144 | −93.6 |
+| Q2 | 629 | 523 | −106.3 |
+| Q3 | 462 | 346 | −116.2 |
+| Q4 | 527 | 397 | −129.6 |
+| **FY** | **1,855** | **1,410** | **−445.6** |
+
+All 19 cost rows move down by their Compensation amount. The figures now move
+*away* from the deck (`FC_Forecast Dashboard_Jul 2026 FC.html`), which means the
+deck's cost basis — not this source — is the thing that needs explaining. Revenue
+is untouched and still ties exactly.
+
+**Reversible.** Set the flag to `True` to restore the old behaviour; nothing else
+changes. `COMPENSATION_LINE` is still fetched, `_apply_compensation()` is still
+present, and `tools/test_compensation_flag.py::FLAG ON` asserts the add-back
+returns at exactly the Compensation amount.
+
+**Consequences for the gates.** `validate_vs_deck.py::check_compensation` is
+skipped while the flag is False (it only ever justified the add-back) and prints
+`compensation adjustment disabled - skipped`. **All nine gates pass** with the
+flag off — verified 2026-09-29, 12 vintages / 796 rows:
+
+```
+FORMATTERS   pass                    COMP ADDITIV pass
+GAP REGISTRY pass  (21 flagged)      ROW 22       pass  (153 cells, all grains)
+BASE vs VIEW pass  (3,845 cells)     ADDITIVITY   pass  (199 cells)
+COMPENSATION pass  (skipped)         REV ANNUAL / REALLOCATION / REV CELLS  pass
+ALL GATES PASS
+```
+
+`ROW 22` was expected to need recalibrating and does **not**: Key Litigation
+carries zero Compensation at every grain in the vintages that make up
+`ROW22_TIES`, so removing the add-back leaves that row — and the tie pattern —
+untouched.
+
+**Open.** Keep the flag `False` until the cost-center alternate hierarchy exists.
+Sections 2 and 3 below describe the add-back and its residual as they were, and
+are retained as the record of why it was introduced.
+
+---
+
 ## 1. What reconciles
 
 **All 7 Revenue rows match the deck exactly** — at all three grains (annual,
@@ -35,6 +110,12 @@ section 6.2.
 ---
 
 ## 2. The Compensation double-count — found and corrected
+
+> **Superseded by section 0 (2026-09-29).** The correction described here is
+> now **disabled** (`queries.APPLY_COMPENSATION_ADJUSTMENT = False`); its premise
+> — that the source's EBITDA chain double-charges Compensation — did not hold
+> against EPM. This section is retained as the record of why it was introduced
+> and of what flipping the flag back to `True` would do.
 
 `ACX_Compensation` is charged **twice** in the source: once into
 `ACX_Cost of Goods Sold` and again into `ACX_Other SG&A`.
@@ -290,9 +371,20 @@ future change to the view cannot drift away unnoticed.
 
 ## 9. Deployment status
 
-**`VERSION$1`, deployed 2026-09-14, is STALE.** It predates the Compensation
-correction of section 2. Redeploy before trusting any Gross Margin or EBITDA
-figure in the live app.
+**`VERSION$1`, deployed 2026-09-15, is byte-identical to the working copy** —
+verified 2026-09-29 by downloading
+`snow://streamlit/ORACLE_DATA_PROD.SANDBOX.DRILLABLE_PNL_DASH/versions/live/` and
+diffing: `queries.py` and `transforms.py` match the local files exactly once CRLF
+line endings are normalised (live is CRLF, local LF; the byte deltas of +221 and
++646 are precisely the line counts). Same MD5 after normalisation.
+
+The earlier note here — that `VERSION$1` predated the Compensation correction —
+was **wrong**. The correction was live, which is why the deployed app showed
+1,855 (the post-add-back figure) rather than 1,409.7.
+
+**It is now stale for a different reason:** the live version still has the
+add-back enabled and therefore still shows 244 for Q1 FY26 North America. Redeploy
+to ship section 0.
 
 ```
 snow streamlit deploy drillable_pnl_dash --replace --role POWER_ANALYST_ORACLE_PROD

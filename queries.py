@@ -74,7 +74,22 @@ PL_LINES: dict[str, str] = {
 # -$0.1M). The residual is confined to actual months and is unexplained.
 COMPENSATION_LINE = "ACX_Compensation"
 
+#: False = show source ACX_ values as in EPM CARDPLN. True = add ACX_Compensation
+#: back to gross_margin and ebitda (old behavior). Keep False until the
+#: cost-center alternate hierarchy exists.
+#:
+#: Disabled 2026-09-29. EPM (cube CARDPLN) is the business standard and its
+#: ACX_EBITDA is authoritative: Q1 FY26 North America = $195.32M, where the
+#: add-back produced $244.22M. Finance handles the Compensation double-count
+#: outside this app, so correcting it here double-corrects it. The line is still
+#: FETCHED (below) so flipping this back to True restores the old behaviour with
+#: no other edit.
+APPLY_COMPENSATION_ADJUSTMENT: bool = False
+
 #: Everything the query pulls: the three reported lines plus the adjustment.
+#: COMPENSATION_LINE stays in the pull regardless of
+#: APPLY_COMPENSATION_ADJUSTMENT -- tools/validate_vs_deck.py's source-identity
+#: gates read it, and keeping it makes the flag a one-line switch.
 FETCHED_LINES: tuple[str, ...] = tuple(PL_LINES.values()) + (COMPENSATION_LINE,)
 
 # ---------------------------------------------------------------------------
