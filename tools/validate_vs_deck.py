@@ -14,13 +14,16 @@ the app moved off the view onto the base table.
 Nine gates:
 
   REVENUE      every live Revenue cell within $0.05M of the deck, across the 9
-               shared vintages x every period x 7 rows. Aug. FC and FY26
-               Actuals are skipped -- they postdate the deck.
-  ADDITIVITY   North America (Topps-folded) + International - Total Physical
+               shared vintages x every period x 7 deck rows. Compared through
+               REVENUE_UNITS, because the page now splits the deck's single
+               North America row into North America gross + Eliminations, so
+               that one unit sums two app rows. Aug. FC and FY26 Actuals are
+               skipped -- they postdate the deck.
+  ADDITIVITY   North America + Eliminations + International - Total Physical
                Cards == 0, per vintage per period.
   FORMATTERS   fmt_m / fmt_pct / delta_fmt against values read off the deck.
   GAP REGISTRY the registry's own invariants, including that the two broken
-               residual rows can never render.
+               residual rows and Gross Margin Eliminations % can never render.
   BASE vs VIEW the base table this app now reads reproduces the view it used to
                read, for the three reported lines. Guards the source swap.
   COMPENSATION ACX_Cost of Goods Sold == its 7 mapped children + ACX_Compensation.
@@ -68,11 +71,15 @@ DECK_JSON = Path(__file__).resolve().parent.parent / "reference" / "deck_jul2026
 # months move value between each other but no annual total changes -- the live
 # app is more correct than the deck and the difference is expected.
 #
-# Listing a (vintage, row) here permits per-cell sub-annual differences for it.
-# It does NOT weaken the two real gates, which still apply to every row:
+# Listing a (vintage, deck row) here permits per-cell sub-annual differences for
+# it. It does NOT weaken the two real gates, which still apply to every row:
 #   * the annual figure must tie (ANNUAL), and
 #   * sub-annual differences must sum to the annual difference (REALLOCATION),
 # so a genuine level change cannot hide behind an entry in this table.
+#
+# Keyed by DECK row position, not by the app's ROWS index. Those were the same
+# number until 2026-09-29, when the page gained two rows the deck has not; deck
+# positions are the stable key, so this table did not have to be renumbered.
 KNOWN_REALLOCATIONS: dict[tuple[str, int], str] = {
     ("2025A", 0): "FY25 restated: Apr/May/Jun value reallocated between North "
                   "America and International (+6,179,159.04 / +4,830,806.60 / "
@@ -262,8 +269,38 @@ def fetch() -> pd.DataFrame:
     return df
 
 
-def _revenue_rows() -> list[tx.Row]:
-    return [r for r in tx.ROWS if r.section == "Revenue"]
+#: Revenue comparison units: (label, deck row position, app ROWS index/indices).
+#:
+#: One unit per deck Revenue row. All but the first are a single app row, and the
+#: first is why this table exists: since 2026-09-29 the page shows 'North
+#: America' as the source's gross segment and gives Eliminations its own row,
+#: while the deck prints ONE folded North America figure (na + elim). So the
+#: deck's row 0 is compared against the SUM of app rows 0 and 2.
+#:
+#: This keeps North America inside the hard annual gate rather than dropping it.
+#: The fold that used to live in transforms._na_folded now lives here, where it
+#: belongs -- it is a statement about the deck, not about the business.
+REVENUE_UNITS: tuple[tuple[str, int, tuple[int, ...]], ...] = (
+    ("North America + Eliminations", 0, (0, 2)),
+    ("International",                1, (1,)),
+    ("Total Physical Cards",         2, (3,)),
+    ("Digital",                      3, (4,)),
+    ("Total ex-Emerging Svcs",       4, (5,)),
+    ("Fanatics Live and Collect",    5, (6,)),
+    ("Total Revenue",                6, (7,)),
+)
+
+
+def _unit_live(cube: tx.Cube, vintage: str, idxs: tuple[int, ...],
+               pk: str) -> float | None:
+    """The app's figure for a comparison unit, or None if any part is missing."""
+    total = 0.0
+    for i in idxs:
+        v = cube.value(vintage, tx.ROWS[i], pk)
+        if v is None:
+            return None
+        total += v
+    return total
 
 
 def _shared_vintages(cube: tx.Cube, deck: dict) -> list[str]:
@@ -282,21 +319,21 @@ def check_revenue_annual(cube: tx.Cube, deck: dict) -> tuple[int, list[str], lis
     checked = 0
 
     for vintage in _shared_vintages(cube, deck):
-        for row in _revenue_rows():
-            live = cube.value(vintage, row, tx.ANNUAL)
-            want = tx.deck_value(deck, vintage, row.idx, tx.ANNUAL)
+        for label, didx, idxs in REVENUE_UNITS:
+            live = _unit_live(cube, vintage, idxs, tx.ANNUAL)
+            want = tx.deck_value(deck, vintage, didx, tx.ANNUAL)
             if want is None or live is None:
                 continue
             checked += 1
             diff = live - want
             if abs(diff) > KNOWN_ANNUAL_DRIFT_CAP:
                 failures.append(
-                    f"{vintage} row{row.idx} ({row.label}) annual: "
+                    f"{vintage} deck{didx} ({label}) annual: "
                     f"live {live:,.2f} vs deck {want:,.2f} (diff {diff:,.2f})"
                 )
             elif abs(diff) > ANNUAL_NOTE_THRESHOLD:
                 notes.append(
-                    f"{vintage} row{row.idx} ({row.label}) annual drift "
+                    f"{vintage} deck{didx} ({label}) annual drift "
                     f"{diff:,.2f} (within the ${KNOWN_ANNUAL_DRIFT_CAP:,.0f} cap)"
                 )
     return checked, failures, notes
@@ -314,9 +351,9 @@ def check_revenue_reallocation(cube: tx.Cube, deck: dict) -> tuple[int, list[str
     checked = 0
 
     for vintage in _shared_vintages(cube, deck):
-        for row in _revenue_rows():
-            a_live = cube.value(vintage, row, tx.ANNUAL)
-            a_deck = tx.deck_value(deck, vintage, row.idx, tx.ANNUAL)
+        for label, didx, idxs in REVENUE_UNITS:
+            a_live = _unit_live(cube, vintage, idxs, tx.ANNUAL)
+            a_deck = tx.deck_value(deck, vintage, didx, tx.ANNUAL)
             if a_live is None or a_deck is None:
                 continue
             annual_diff = a_live - a_deck
@@ -325,8 +362,8 @@ def check_revenue_reallocation(cube: tx.Cube, deck: dict) -> tuple[int, list[str
                 total = 0.0
                 seen = 0
                 for pk in keys:
-                    lv = cube.value(vintage, row, pk)
-                    dv = tx.deck_value(deck, vintage, row.idx, pk)
+                    lv = _unit_live(cube, vintage, idxs, pk)
+                    dv = tx.deck_value(deck, vintage, didx, pk)
                     if lv is None or dv is None:
                         continue
                     total += lv - dv
@@ -337,7 +374,7 @@ def check_revenue_reallocation(cube: tx.Cube, deck: dict) -> tuple[int, list[str
                 # $1 absorbs float noise across a dozen billion-scale addends.
                 if abs(total - annual_diff) > 1.0:
                     failures.append(
-                        f"{vintage} row{row.idx} ({row.label}): {grain_name} "
+                        f"{vintage} deck{didx} ({label}): {grain_name} "
                         f"differences sum to {total:,.2f} but the annual "
                         f"difference is {annual_diff:,.2f} -- that is a level "
                         f"change, not a reallocation"
@@ -358,11 +395,11 @@ def check_revenue_cells(cube: tx.Cube, deck: dict) -> tuple[int, list[str], list
                 if pk not in period_keys:
                     period_keys.append(pk)
 
-        for row in _revenue_rows():
+        for label, didx, idxs in REVENUE_UNITS:
             hits: list[str] = []
             for pk in period_keys:
-                live = cube.value(vintage, row, pk)
-                want = tx.deck_value(deck, vintage, row.idx, pk)
+                live = _unit_live(cube, vintage, idxs, pk)
+                want = tx.deck_value(deck, vintage, didx, pk)
                 if want is None:
                     continue
                 checked += 1
@@ -372,35 +409,42 @@ def check_revenue_cells(cube: tx.Cube, deck: dict) -> tuple[int, list[str], list
                     hits.append(f"{pk}: {live - want:+,.2f}")
             if not hits:
                 continue
-            key = (vintage, row.idx)
+            key = (vintage, didx)
             if key in KNOWN_REALLOCATIONS:
                 excused.append(
-                    f"{vintage} row{row.idx} ({row.label}): {len(hits)} cells "
+                    f"{vintage} deck{didx} ({label}): {len(hits)} cells "
                     f"[{', '.join(hits)}]"
                 )
             else:
                 failures.append(
-                    f"{vintage} row{row.idx} ({row.label}): {', '.join(hits)}"
+                    f"{vintage} deck{didx} ({label}): {', '.join(hits)}"
                 )
     return checked, failures, excused
 
 
 def check_additivity(cube: tx.Cube) -> tuple[int, list[str]]:
-    """NA(folded) + International - Total Physical Cards must be 0."""
+    """NA + Eliminations + International - Total Physical Cards must be 0.
+
+    Before 2026-09-29 this was NA(folded) + International, because North America
+    carried the eliminations. Now Eliminations is its own row, so the identity is
+    stated in three terms -- which is how the source rolls it up, and the reason
+    splitting the row is safe.
+    """
     failures: list[str] = []
     checked = 0
-    na, intl, phys = tx.ROWS[0], tx.ROWS[1], tx.ROWS[2]
+    na, intl, elim, phys = tx.ROWS[0], tx.ROWS[1], tx.ROWS[2], tx.ROWS[3]
 
     for vintage in cube.vintages:
         keys = {pk for grain in tx.GRAINS for pk, _ in cube.periods(vintage, grain)}
         for pk in sorted(keys):
             a = cube.value(vintage, na, pk)
             b = cube.value(vintage, intl, pk)
+            e = cube.value(vintage, elim, pk)
             c = cube.value(vintage, phys, pk)
-            if None in (a, b, c):
+            if None in (a, b, e, c):
                 continue
             checked += 1
-            resid = a + b - c            # type: ignore[operator]
+            resid = a + b + e - c        # type: ignore[operator]
             if abs(resid) > 1.0:         # $1, generous against float noise
                 failures.append(f"{vintage} {pk}: residual {resid:,.4f}")
     return checked, failures
@@ -552,7 +596,7 @@ def check_row22(cube: tx.Cube, deck: dict) -> tuple[int, list[str]]:
     why the annual figure is clean). So the correction can move this row
     sub-annually even where it cannot move it annually.
     """
-    row = tx.ROWS[22]
+    row = tx.ROWS[24]                # deck row 22, EBITDA Key Litigation Costs
     failures: list[str] = []
     checked = 0
 
@@ -565,7 +609,7 @@ def check_row22(cube: tx.Cube, deck: dict) -> tuple[int, list[str]]:
 
         worst, where = 0.0, ""
         for pk in period_keys:
-            want = tx.deck_value(deck, vintage, row.idx, pk)
+            want = tx.deck_value(deck, vintage, row.deck_idx, pk)
             if want is None:
                 continue
             checked += 1
@@ -597,12 +641,12 @@ def check_gap_registry() -> list[str]:
     problems: list[str] = []
 
     flagged = sorted(tx.GAPS)
-    if len(flagged) != 21:
-        problems.append(f"{len(flagged)} flagged rows, expected 21: {flagged}")
+    if len(flagged) != 22:
+        problems.append(f"{len(flagged)} flagged rows, expected 22: {flagged}")
 
-    if len(tx.UNRECONCILED_ROWS) != 19:
+    if len(tx.UNRECONCILED_ROWS) != 20:
         problems.append(
-            f"{len(tx.UNRECONCILED_ROWS)} unreconciled rows, expected 19"
+            f"{len(tx.UNRECONCILED_ROWS)} unreconciled rows, expected 20"
         )
 
     # Every Revenue row must be reconciled; a cost row may only claim to be if it
@@ -633,7 +677,7 @@ def check_gap_registry() -> list[str]:
     # margin must not be reachable by flipping the diagnostic toggle.
     if tx.HIERARCHY not in tx.BLOCKING_KINDS:
         problems.append("HIERARCHY must be in BLOCKING_KINDS")
-    for idx in (10, 18):
+    for idx in (12, 20):
         row = tx.ROWS[idx]
         if tx.HIERARCHY not in row.gaps:
             problems.append(f"row{idx} ({row.label}) must carry HIERARCHY")
@@ -644,6 +688,23 @@ def check_gap_registry() -> list[str]:
             )
         if tx.blocking_reason(row) != tx.HIERARCHY:
             problems.append(f"row{idx} explains itself as {tx.blocking_reason(row)!r}")
+
+    # Gross Margin Eliminations % must be withheld too: eliminations revenue is
+    # negative, so the margin over it is sign-inverted and means nothing.
+    if tx.SIGN not in tx.BLOCKING_KINDS:
+        problems.append("SIGN must be in BLOCKING_KINDS")
+    elim_gm = tx.ROWS[10]
+    if tx.SIGN not in elim_gm.gaps:
+        problems.append(f"row10 ({elim_gm.label} %) must carry SIGN")
+    if elim_gm.is_derivable:
+        problems.append(
+            "row10 (Gross Margin Eliminations %) is derivable -- a margin over "
+            "negative revenue would render"
+        )
+    if tx.blocking_reason(elim_gm) != tx.SIGN:
+        problems.append(
+            f"row10 explains itself as {tx.blocking_reason(elim_gm)!r}"
+        )
 
     return problems
 
@@ -751,8 +812,8 @@ def main() -> None:
 
 
 def _key_of(excused_line: str) -> tuple[str, int]:
-    """Recover the (vintage, row_idx) key from an excused-line string."""
-    vintage, rest = excused_line.split(" row", 1)
+    """Recover the (vintage, deck_idx) key from an excused-line string."""
+    vintage, rest = excused_line.split(" deck", 1)
     return vintage, int(rest.split(" ", 1)[0].rstrip(":"))
 
 

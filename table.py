@@ -180,9 +180,9 @@ def build_statement(
 # KPI tiles
 # ---------------------------------------------------------------------------
 _TILES: tuple[tuple[str, int], ...] = (
-    ("Total Revenue", 6),
-    ("Total EBITDA", 24),
-    ("EBITDA Margin", 25),
+    ("Total Revenue", 7),
+    ("Total EBITDA", 26),
+    ("EBITDA Margin", 27),
 )
 
 

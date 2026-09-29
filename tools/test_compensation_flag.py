@@ -91,7 +91,7 @@ def _source_lookup(master: pd.DataFrame) -> dict[tuple[str, str, str, str], floa
 
 def check_anchor(cube: tx.Cube) -> list[str]:
     """The exact cell from the bug report, against the EPM figure."""
-    row = tx.ROWS[14]                      # EBITDA / North America
+    row = tx.ROWS[16]                      # EBITDA / North America
     got = cube.value(ANCHOR_VINTAGE, row, ANCHOR_PERIOD)
     if got is None:
         return [f"{ANCHOR_VINTAGE} {ANCHOR_PERIOD} NA EBITDA is None"]
@@ -148,7 +148,7 @@ def check_flag_on_restores_addback(master: pd.DataFrame, src: dict) -> list[str]
     finally:
         queries.APPLY_COMPENSATION_ADJUSTMENT = original
 
-    got = cube.value(ANCHOR_VINTAGE, tx.ROWS[14], ANCHOR_PERIOD)
+    got = cube.value(ANCHOR_VINTAGE, tx.ROWS[16], ANCHOR_PERIOD)
     comp = src.get((ANCHOR_VINTAGE, tx._COMP, ANCHOR_PERIOD, ANCHOR_SEGMENT))
     if got is None or comp is None:
         return ["flag-on check could not resolve the anchor cell"]

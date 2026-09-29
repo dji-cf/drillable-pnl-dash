@@ -227,7 +227,7 @@ with tab_trends:
         metric_idx = st.selectbox(
             "Metric",
             list(range(len(tx.ROWS))),
-            index=6,                     # Total Revenue, the deck's default
+            index=7,                     # Total Revenue, the deck's default
             format_func=_metric_label,
             key="t_metric",
             label_visibility="collapsed",
