@@ -660,6 +660,10 @@ def check_gap_registry() -> list[str]:
 #   DECK JUL   Jul FC and Jun FC against reference/deck_jul2026.json -- James's
 #              Jul 2026 FC dashboard, the closest artefact we hold to the
 #              2026-07 PDF. Same tolerances.
+#   DECK MAY   May FC (MAY26RF) against reference/deck_pdf_jul_jun_may.json key
+#              MAY26RF only (2026-06_Monthly Forecast.pdf p.5, via James
+#              2026-09-30). No other May/Apr/Mar reference is used -- the
+#              deck_jul2026.json May FC Total Physical Cards GM% is stale.
 #   EBITDA SUM the 8 leaf EBITDA rows sum to Total within $0.1M, and each
 #              subtotal equals its parts -- nothing double-counted.
 #   CARVE-OUTS Total EBITDA equals the plain sum of the ten base LOBs, which is
@@ -667,10 +671,56 @@ def check_gap_registry() -> list[str]:
 #   INTL ELIMS LB_392 / CO_31000 / ICP_32002 revenue is non-positive and under
 #              $10M in magnitude, every vintage and period -- including the
 #              FY25 Actuals months that swung +72.7 / -66.5 under the old
-#              derived (LB_392 - Topps) definition.
+#              derived (LB_392 - Topps) definition. Only exemption:
+#              _INTL_ELIMS_FY25_REALLOC below.
 #   ONE ENTITY every LOB tuple resolves to exactly one ENTITY and one
 #              INTERCOMPANY value.
 STG_DECK_JSON = DECK_JSON.parent / "deck_pdf_p7.json"
+STG_MAY_JSON = DECK_JSON.parent / "deck_pdf_jul_jun_may.json"
+
+# OTI_ADJ: Corporate and TCG tie to the deck at every quarter for Sep/Aug/Jul/
+# Jun, therefore the OTI_ADJ plan-element rows are inside Total_Budget. If
+# Corporate ever drifts by a round amount in one quarter, check this first.
+
+# FY25 Actuals restatement on LB_392 / CO_31000 / ICP_32002 revenue: the same
+# Apr/May/Jun reallocation documented in KNOWN_REALLOCATIONS[("2025A", 0)]
+# (-6,179,159.04 / -4,830,806.60 / +11,009,965.64 here, netting to zero). Only
+# these three 2025A months are exempt, and only while the value matches to
+# $0.01M; every other vintage and period stays gated.
+_INTL_ELIMS_FY25_REALLOC: dict[tuple[str, str], float] = {
+    ("2025A", "Apr"): -6.18e6,
+    ("2025A", "May"): -4.83e6,
+    ("2025A", "Jun"): +11.01e6,
+}
+
+# reference/deck_pdf_jul_jun_may.json key -> dashboard (section, label).
+_PDF_SECTIONS = {"revenue": "Revenue", "gm_pct": "Gross Margin", "adj_ebitda": "EBITDA"}
+_PDF_LABELS = {
+    ("Revenue", "north_america"): "North America", ("Revenue", "international"): "International",
+    ("Revenue", "total_physical_cards"): "Total Physical Cards", ("Revenue", "digital"): "Digital",
+    ("Revenue", "total_ex_emerging"): "Total ex-Emerging Svcs",
+    ("Revenue", "fanatics_collect"): "Fanatics Collect", ("Revenue", "total"): "Total Revenue",
+    ("Gross Margin", "north_america"): "North America", ("Gross Margin", "international"): "International",
+    ("Gross Margin", "total_physical_cards"): "Total Physical Cards", ("Gross Margin", "digital"): "Digital",
+    ("Gross Margin", "total_ex_emerging"): "Total ex-Emerging Svcs",
+    ("Gross Margin", "fanatics_collect"): "Fanatics Collect", ("Gross Margin", "total"): "Total Gross Margin",
+    ("EBITDA", "north_america"): "North America", ("EBITDA", "international"): "International",
+    ("EBITDA", "eliminations"): "Eliminations", ("EBITDA", "total_physical_cards"): "Total Physical Cards",
+    ("EBITDA", "digital"): "Digital", ("EBITDA", "corporate"): "Corporate",
+    ("EBITDA", "total_ex_emerging"): "Total ex-Emerging Svcs",
+    ("EBITDA", "fanatics_collect"): "Fanatics Collect", ("EBITDA", "key_litigation"): "Key Litigation Costs",
+    ("EBITDA", "tcg"): "TCG", ("EBITDA", "total"): "Total EBITDA",
+}
+
+
+def _pdf_json_expected(block: dict) -> dict[str, list[float]]:
+    """One scenario block of deck_pdf_jul_jun_may.json -> p.7-style dict."""
+    out: dict[str, list[float]] = {}
+    for skey, section in _PDF_SECTIONS.items():
+        for lkey, vals in block[skey].items():
+            out[f"{section}|{_PDF_LABELS[(section, lkey)]}"] = vals
+    out["EBITDA Margin|EBITDA Margin"] = block["adj_ebitda_pct"]
+    return out
 STG_TOL_DOLLARS = 1_000_000.0
 STG_TOL_PCT = 0.005
 _STG_PERIODS = ("Q1", "Q2", "Q3", "Q4", tx.ANNUAL)
@@ -771,6 +821,9 @@ def check_stg_identities(cube: tx.Cube) -> tuple[int, list[str]]:
             rev = cube.segs.get((v, "net_revenue", pk))
             if rev is not None:
                 ie = rev["ie"]
+                exempt = _INTL_ELIMS_FY25_REALLOC.get((v, pk))
+                if exempt is not None and abs(ie - exempt) <= 10_000:
+                    continue
                 if ie > 1.0 or abs(ie) >= 10_000_000:
                     fails.append(f"INTL ELIMS {v} {pk}: LB_392 @ ICP_32002 = {ie/1e6:+,.2f}M")
     return checked, fails
@@ -787,11 +840,12 @@ def main_stg() -> None:
 
     pdf = json.loads(STG_DECK_JSON.read_text(encoding="utf-8"))
     jul = json.loads(DECK_JSON.read_text(encoding="utf-8"))
+    may = json.loads(STG_MAY_JSON.read_text(encoding="utf-8"))
     runs = [("DECK p.7", "Sep. FC", pdf["Sep. FC"], True),
             ("DECK p.7", "Aug. FC", pdf["Aug. FC"], True),
             ("DECK JUL", "Jul. FC", _deck_json_expected(jul, "Jul. FC"), False),
             ("DECK JUL", "Jun. FC", _deck_json_expected(jul, "Jun. FC"), False),
-            ("DECK JUL", "May. FC", _deck_json_expected(jul, "May. FC"), False)]
+            ("DECK MAY", "May. FC", _pdf_json_expected(may["MAY26RF"]), True)]
 
     failed = False
     multi = df[(df["max_n_entity"] > 1) | (df["max_n_icp"] > 1)]
@@ -816,8 +870,8 @@ def main_stg() -> None:
         print(f"  {f}")
     failed |= bool(fails)
 
-    print("\nOTI_ADJ: PLAN_ELEMENT carries only 'Total_Budget', so OTI_ADJ rows "
-          "cannot be shown with/without -- question 2 for Vivek.")
+    print(f"  INTL ELIMS exempt (FY25 restatement, KNOWN_REALLOCATIONS): "
+          f"{', '.join(f'{v} {p}' for v, p in _INTL_ELIMS_FY25_REALLOC)}")
     log_path = Path("/tmp/validate_stg_cells.log")
     log_path.write_text("\n".join(all_logs) + "\n", encoding="utf-8")
     print(f"per-cell log ({len(all_logs)} cells): {log_path}")
