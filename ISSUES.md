@@ -92,101 +92,20 @@ are retained as the record of why it was introduced.
 
 ---
 
-## 0b. 2026-09-29 — One North America definition on the whole page
-
-**Decision by Anoop Tiwari (EPM owner):** North America means the EPM cube's
-`Total - North America Gross` LOB (segment `na`) in **every** section of this
-page. Before this change it meant two different things: `na` under EBITDA, and
-`na + elim` under Revenue and Gross Margin.
-
-**What changed.** `transforms._na_folded` (`na + elim`) is **deleted**. Rows 0
-and 8 now use `_na_gross`, the same expression EBITDA already used. Eliminations
-gets its own Revenue row and its own Gross Margin row, mirroring the EBITDA row
-it always had. Two rows were inserted, so `ROWS` is now **28** rows.
-
-**Effect on North America revenue** (SEP26RF, $M) — the old figure was short by
-exactly the Topps eliminations in every cell:
-
-| | Q1 | Q2 | Q3 | Q4 | FY |
-|---|---|---|---|---|---|
-| Revenue NA, was (`na + elim`) | 652.0 | 1,289.2 | 1,076.8 | 1,070.7 | 4,088.7 |
-| Revenue NA, now (`na`) | **668.9** | **1,313.9** | **1,132.3** | **1,124.1** | **4,239.2** |
-| new Eliminations row | -16.9 | -24.7 | -55.5 | -53.4 | -150.5 |
-| Gross Margin NA %, was | 47.39% | — | — | — | 53.21% |
-| Gross Margin NA %, now | **45.74%** | 53.85% | 54.16% | 48.54% | **51.25%** |
-
-All of those now agree with the EPM reference query to **0.0000** — every
-pure-read row across SEP26RF / AUG26RF / JUL26RF × Q1–Q4 × FY, 0 mismatches.
-
-**Nothing else moved.** Total Physical Cards, Total Revenue, Total EBITDA and
-EBITDA Margin are unchanged, because the fold only ever moved value *between*
-two rows inside the same subtotal. The block is still additive, now in three
-terms instead of two:
-
-```
-NA + Eliminations + International == Total Physical Cards
-668.9 +   (-16.9)  +    139.6     ==        791.6          (Q1, residual 0.0000)
-```
-
-`tools/validate_vs_deck.py::check_additivity` asserts that form — 199 cells pass.
-
-**Gross Margin Eliminations % is withheld** (renders `—`). Eliminations revenue
-is **negative** in every cell (SEP26RF: -16.9 / -24.7 / -55.5 / -53.4 / -150.5),
-so a margin over it is sign-inverted and means nothing: the raw quotient swings
--17.94% (Q1) → +8.39% (Q2) → -2.67% (Q3). This is a new gap kind, **SIGN**, in
-`BLOCKING_KINDS` alongside `HIERARCHY`, on row 10. The numerator and denominator
-are both real, so the row is `is_live` — `SIGN` is what withholds it, and
-`check_gap_registry` asserts it can never render.
-
-**Relabel.** "Fanatics Collect" → **"Fanatics Live and Collect"** in all three
-sections (rows 6, 14, 23). The segment was always
-`Total - Fanatics Live and Collect`; the old label understated it, which is the
-`COMBINED` gap in section 4 and is now at least named honestly on screen.
-
-**Row indices moved, and the deck reference did not.** `reference/deck_jul2026.json`
-still has the deck's **26** rows, and the deck has no Eliminations line under
-Revenue or Gross Margin. Rather than inserting placeholder rows into that file —
-which `tools/extract_deck.py` regenerates wholesale, so the edit would be
-silently lost — `Row` gained a **`deck_idx`** field. `ROWS` position and deck
-position are now separate numberings, `deck_value()` takes the deck one, and the
-two new rows carry `deck_idx=None` so the deck gates skip them instead of
-comparing against the wrong row. An assertion guards the mapping:
-
-```python
-assert [r.deck_idx for r in ROWS if r.deck_idx is not None] == list(range(26))
-```
-
-The deck's single folded North America row is still gated, via
-`validate_vs_deck.REVENUE_UNITS`, which compares deck row 0 against the **sum of
-app rows 0 and 2**. The fold now lives in the validator, where it is a statement
-about the deck rather than about the business — REV CELLS passes 1,071 cells.
-
-Old → new row index: 0→0, 1→1, **2 = Revenue Eliminations (new)**, 2→3, 3→4,
-4→5, 5→6, 6→7, 7→8, 8→9, **10 = Gross Margin Eliminations % (new)**, 9→11,
-10→12, 11→13, 12→14, 13→15, 14→16 … 25→27.
-
-**Verified.** All nine gates pass (22 flagged, 20 unreconciled). All four
-compensation-flag gates pass — the anchor is now `ROWS[16]` and still reads
-`195.3217M`.
-
----
-
 ## 1. What reconciles
 
-**All 8 Revenue rows match the source exactly** — at all three grains (annual,
+**All 7 Revenue rows match the deck exactly** — at all three grains (annual,
 quarterly, monthly), for all 9 shared vintages. Verified cell-for-cell by
 `tools/validate_vs_deck.py`, which asserts character-identical formatted output,
-not merely close figures. Against the *deck*, North America and the new
-Eliminations row are compared as a folded pair (section 0b); against the EPM
-reference query every row matches to 0.0000 individually.
+not merely close figures.
 
-**No cost row reconciles.** All 20 of them (the 8 Gross Margin % rows, the 11
+**No cost row reconciles.** All 19 of them (the 7 Gross Margin % rows, the 11
 EBITDA rows, EBITDA Margin) carry a cost basis that is corrected for a real
 source defect but is still short in actual months. Sections 2 and 3 explain the
 two halves of that.
 
-Row 24 (EBITDA Key Litigation Costs, deck row 22) is the near miss and has its
-own note in section 6.2.
+Row 22 (EBITDA Key Litigation Costs) is the near miss and has its own note in
+section 6.2.
 
 ---
 
@@ -258,7 +177,7 @@ One subsection per kind. *Affects* lists row indices as they appear in
 to close.
 
 ### `SPLIT` — not separable in the source
-**Affects:** rows 4, 20, 21 (Revenue Digital, EBITDA Digital, EBITDA Corporate)
+**Affects:** rows 3, 18, 19 (Revenue Digital, EBITDA Digital, EBITDA Corporate)
 
 The view has no Digital and no Corporate segment — only the
 ex-Emerging-Services minus Physical-Cards residual, which is Digital **and**
@@ -267,7 +186,7 @@ Corporate combined.
 **Needs:** a Digital and a Corporate segment (or column) in the view.
 
 ### `COMBINED` — two deck lines are one source segment
-**Affects:** rows 6, 23 (Revenue and EBITDA Fanatics Live and Collect)
+**Affects:** rows 5, 21 (Revenue Fanatics Collect, EBITDA Fanatics Collect)
 
 Fanatics Live and Fanatics Collect are one segment in the source
 (`Total - Fanatics Live and Collect`); the deck reports Collect alone.
@@ -275,7 +194,7 @@ Fanatics Live and Fanatics Collect are one segment in the source
 **Needs:** separate Fanatics Live and Fanatics Collect segments.
 
 ### `PARTIAL` — only one of several elimination segments
-**Affects:** row 18 (EBITDA Eliminations)
+**Affects:** row 16 (EBITDA Eliminations)
 
 The only elimination segment in the view is Topps Eliminations. The deck's
 Eliminations line is a unified group.
@@ -283,14 +202,14 @@ Eliminations line is a unified group.
 **Needs:** the remaining elimination segments.
 
 ### `ABSENT` — no such segment at all
-**Affects:** row 25 (EBITDA TCG)
+**Affects:** row 23 (EBITDA TCG)
 
 No TCG segment exists in the view at any grain.
 
 **Needs:** a TCG segment in the view.
 
 ### `HIERARCHY` — the residual is broken, not merely approximate
-**Affects:** rows 12, 20 (Gross Margin % Digital, EBITDA Digital)
+**Affects:** rows 10, 18 (Gross Margin % Digital, EBITDA Digital)
 
 These are derived as ex-Emerging Services minus Physical Cards, but the source
 has ex-Emerging **smaller than its own subset** on 34 of 42 lines — for EBITDA,
@@ -298,30 +217,15 @@ in 180 of 181 period-cells, worst −$179.4M. The residual is therefore not a re
 segment: for Jul. FC it computes a **108.5% gross margin** against the deck's
 35.6%.
 
-This is one of two kinds in `BLOCKING_KINDS` (with `SIGN`). Rows carrying it
-render as an em-dash unconditionally, because the number that would appear is not
-off — it is meaningless.
+This is the only kind in `BLOCKING_KINDS`. Rows carrying it render as an em-dash
+unconditionally, because the number that would appear is not off — it is
+meaningless.
 
 **Needs:** a Digital segment in the source, or a corrected LOB rollup in which
 ex-Emerging Services actually contains Physical Cards.
 
-### `SIGN` — the denominator is negative, so the ratio is nonsense
-**Affects:** row 10 (Gross Margin Eliminations %)
-
-Eliminations revenue is negative in every cell (SEP26RF: -16.9 / -24.7 / -55.5 /
--53.4 / -150.5 $M), because eliminations remove intercompany revenue. A margin
-computed over it is sign-inverted and swings arbitrarily: -17.94% in Q1, +8.39%
-in Q2, -2.67% in Q3. Both the numerator and the denominator are real figures, so
-the row is `is_live` — `SIGN` is what withholds it.
-
-The dollar Eliminations rows (Revenue row 2, EBITDA row 18) are unaffected and
-render normally; only the *percentage* is meaningless.
-
-**Needs:** nothing in the source. A margin on an eliminations line is not a
-meaningful quantity, so this kind is permanent by design.
-
 ### `UNRECONCILED` — cost basis only partly ties
-**Affects:** all 20 cost rows (8–27)
+**Affects:** all 19 cost rows (7–25)
 
 The Compensation double-count of section 2 is corrected here and accounts for
 most of the gap. What remains is the actual-month shortfall of section 3.
@@ -333,50 +237,42 @@ same months already does.
 
 ## 5. Per-row status
 
-Five rows render as an em-dash. Every other row shows its live figure.
+Four rows render as an em-dash. Every other row shows its live figure.
 
-`#` is the app's `ROWS` index; `deck` is the position in
-`reference/deck_jul2026.json` (`Row.deck_idx`). They diverged on 2026-09-29 —
-see section 0b.
+| # | Section | Label | Kinds | Renders |
+|---|---|---|---|---|
+| 0 | Revenue | North America † | — | yes |
+| 1 | Revenue | International | — | yes |
+| 2 | Revenue | Total Physical Cards | — | yes |
+| 3 | Revenue | Digital | `SPLIT` | yes |
+| 4 | Revenue | Total ex-Emerging Svcs | — | yes |
+| 5 | Revenue | Fanatics Collect | `COMBINED` | yes |
+| 6 | Revenue | Total Revenue | — | yes |
+| 7 | Gross Margin | North America | `UNRECONCILED` | yes |
+| 8 | Gross Margin | International | `UNRECONCILED` | yes |
+| 9 | Gross Margin | Total Physical Cards | `UNRECONCILED` | yes |
+| 10 | Gross Margin | Digital | `UNRECONCILED`, `HIERARCHY` | **no** — broken residual |
+| 11 | Gross Margin | Total ex-Emerging Svcs | `UNRECONCILED` | yes |
+| 12 | Gross Margin | Fanatics Collect | `UNRECONCILED` | yes |
+| 13 | Gross Margin | Total Gross Margin | `UNRECONCILED` | yes |
+| 14 | EBITDA | North America | `UNRECONCILED` | yes |
+| 15 | EBITDA | International | `UNRECONCILED` | yes |
+| 16 | EBITDA | Eliminations | `UNRECONCILED`, `PARTIAL` | yes |
+| 17 | EBITDA | Total Physical Cards | `UNRECONCILED` | yes |
+| 18 | EBITDA | Digital | `UNRECONCILED`, `SPLIT`, `HIERARCHY` | **no** — broken residual |
+| 19 | EBITDA | Corporate | `UNRECONCILED`, `SPLIT` | **no** — no expression |
+| 20 | EBITDA | Total ex-Emerging Svcs | `UNRECONCILED` | yes |
+| 21 | EBITDA | Fanatics Collect | `UNRECONCILED`, `COMBINED` | yes |
+| 22 | EBITDA | Key Litigation Costs | `UNRECONCILED` | yes — see 6.2 |
+| 23 | EBITDA | TCG | `UNRECONCILED`, `ABSENT` | **no** — no expression |
+| 24 | EBITDA | Total EBITDA | `UNRECONCILED` | yes |
+| 25 | EBITDA Margin | EBITDA Margin | `UNRECONCILED` | yes |
 
-| # | deck | Section | Label | Kinds | Renders |
-|---|---|---|---|---|---|
-| 0 | 0 | Revenue | North America † | — | yes |
-| 1 | 1 | Revenue | International | — | yes |
-| 2 | — | Revenue | Eliminations | — | yes |
-| 3 | 2 | Revenue | Total Physical Cards | — | yes |
-| 4 | 3 | Revenue | Digital | `SPLIT` | yes |
-| 5 | 4 | Revenue | Total ex-Emerging Svcs | — | yes |
-| 6 | 5 | Revenue | Fanatics Live and Collect | `COMBINED` | yes |
-| 7 | 6 | Revenue | Total Revenue | — | yes |
-| 8 | 7 | Gross Margin | North America | `UNRECONCILED` | yes |
-| 9 | 8 | Gross Margin | International | `UNRECONCILED` | yes |
-| 10 | — | Gross Margin | Eliminations | `UNRECONCILED`, `SIGN` | **no** — negative denominator |
-| 11 | 9 | Gross Margin | Total Physical Cards | `UNRECONCILED` | yes |
-| 12 | 10 | Gross Margin | Digital | `UNRECONCILED`, `HIERARCHY` | **no** — broken residual |
-| 13 | 11 | Gross Margin | Total ex-Emerging Svcs | `UNRECONCILED` | yes |
-| 14 | 12 | Gross Margin | Fanatics Live and Collect | `UNRECONCILED` | yes |
-| 15 | 13 | Gross Margin | Total Gross Margin | `UNRECONCILED` | yes |
-| 16 | 14 | EBITDA | North America | `UNRECONCILED` | yes |
-| 17 | 15 | EBITDA | International | `UNRECONCILED` | yes |
-| 18 | 16 | EBITDA | Eliminations | `UNRECONCILED`, `PARTIAL` | yes |
-| 19 | 17 | EBITDA | Total Physical Cards | `UNRECONCILED` | yes |
-| 20 | 18 | EBITDA | Digital | `UNRECONCILED`, `SPLIT`, `HIERARCHY` | **no** — broken residual |
-| 21 | 19 | EBITDA | Corporate | `UNRECONCILED`, `SPLIT` | **no** — no expression |
-| 22 | 20 | EBITDA | Total ex-Emerging Svcs | `UNRECONCILED` | yes |
-| 23 | 21 | EBITDA | Fanatics Live and Collect | `UNRECONCILED`, `COMBINED` | yes |
-| 24 | 22 | EBITDA | Key Litigation Costs | `UNRECONCILED` | yes — see 6.2 |
-| 25 | 23 | EBITDA | TCG | `UNRECONCILED`, `ABSENT` | **no** — no expression |
-| 26 | 24 | EBITDA | Total EBITDA | `UNRECONCILED` | yes |
-| 27 | 25 | EBITDA Margin | EBITDA Margin | `UNRECONCILED` | yes |
-
-22 of 28 rows carry at least one kind; 20 of those are `UNRECONCILED`. Both
+21 of 26 rows carry at least one kind; 19 of those are `UNRECONCILED`. Both
 counts are asserted by `tools/validate_vs_deck.py::check_gap_registry`.
 
-`ROWS` index is **not** the deck's row index any more. `Row.deck_idx` carries the
-deck position, and an assertion in `transforms.py` requires the non-None
-`deck_idx` values to be exactly `range(26)` in order, so the tuple still cannot
-be reordered silently.
+`ROWS` index **is** the deck's row index — `reference/deck_jul2026.json` keys on
+it, so the tuple must never be reordered.
 
 ---
 
@@ -428,12 +324,9 @@ release it.
 These are deliberate, verified departures from a naive reading of the source —
 not defects.
 
-**† North America is the source's gross segment, in every section.** As of
-2026-09-29 (section 0b) Revenue and Gross Margin no longer fold Topps
-Eliminations into North America; Eliminations has its own row in all three
-sections. The deck printed the folded figure (4,074.8 − 121.5 = 3,953.3), so the
-deck comparison folds the two app rows back together in
-`validate_vs_deck.REVENUE_UNITS` rather than the page folding them.
+**† North America revenue folds in Topps Eliminations.** This reproduces the deck
+exactly: 4,074.8 − 121.5 = 3,953.3, its printed value. EBITDA keeps Eliminations
+on its own row, as the deck does — folding there would double-count.
 
 **Period labels are computed, not hardcoded.** They come per vintage from
 `period_date < DATE_TRUNC('MONTH', forecast_asof_date)`. The deck hardcoded its

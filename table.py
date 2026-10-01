@@ -114,7 +114,9 @@ def _body(
             classes.append("gap-row")
 
         out.append(f'<tr class="{" ".join(classes)}" data-sec="{_esc(section)}">')
-        out.append(f'<td class="lbl">{_esc(row.label)}</td>')
+        tip = tx.ROW_TOOLTIPS.get((row.section, row.label))
+        title = f' title="{_esc(tip)}"' if tip else ""
+        out.append(f'<td class="lbl"{title}>{_esc(row.label)}</td>')
 
         fmt = tx.fmt_pct if row.is_pct else tx.fmt_m
 
@@ -180,9 +182,9 @@ def build_statement(
 # KPI tiles
 # ---------------------------------------------------------------------------
 _TILES: tuple[tuple[str, int], ...] = (
-    ("Total Revenue", 7),
-    ("Total EBITDA", 26),
-    ("EBITDA Margin", 27),
+    ("Total Revenue", 6),
+    ("Total EBITDA", 24),
+    ("EBITDA Margin", 25),
 )
 
 

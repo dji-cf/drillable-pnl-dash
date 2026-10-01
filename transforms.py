@@ -24,7 +24,7 @@ and why row 22 stays flagged despite tying for Jul. FC.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Mapping, Sequence
 
 import pandas as pd
@@ -164,68 +164,50 @@ PARTIAL = "PARTIAL"
 ABSENT = "ABSENT"
 HIERARCHY = "HIERARCHY"
 UNRECONCILED = "UNRECONCILED"
-SIGN = "SIGN"
 
 #: Every kind the registry may use. Guards GAPS against a typo'd kind --
 #: tools/validate_vs_deck.py::check_gap_registry asserts membership.
 GAP_KINDS: frozenset[str] = frozenset(
-    {SPLIT, COMBINED, PARTIAL, ABSENT, HIERARCHY, UNRECONCILED, SIGN}
+    {SPLIT, COMBINED, PARTIAL, ABSENT, HIERARCHY, UNRECONCILED}
 )
 
 # Keyed by row index. A row may carry more than one kind.
 #
-# NOTE 2026-09-29: two rows were inserted (Revenue Eliminations at 2, Gross
-# Margin Eliminations % at 10), so every index below is shifted from the deck's
-# own numbering. Row.deck_idx carries the deck position; this registry keys on
-# the app's ROWS position. See ISSUES.md section 0.
-#
-# Row 4 (Revenue Digital) is worth a word: it currently matches the deck to the
+# Row 3 (Revenue Digital) is worth a word: it currently matches the deck to the
 # cent, because Corporate has no revenue, so the residual happens to be Digital
 # alone. It is still flagged -- the moment any Corporate revenue appears it will
 # be silently absorbed into this row with no other symptom.
 #
-# Row 2 (Revenue Eliminations) is deliberately UNFLAGGED. It is a direct read of
-# the elim segment -- the most trustworthy kind of row there is. The deck has no
-# Revenue Eliminations line to tie it to (it folds eliminations into North
-# America), so deck_idx is None and the deck gates skip it rather than fail it.
-#
 # The Gross Margin % rows inherit the same structural limits as the Revenue rows
-# they sit under (row 12 is the same residual, row 14 the same combined
-# segment). They are not double-flagged with SPLIT/COMBINED because all 8
-# already carry UNRECONCILED, which strictly dominates. Rows 10, 12 and 20 are
-# the exception: SIGN and HIERARCHY are not dominated, because they withhold the
-# figure where UNRECONCILED alone would let it render.
+# they sit under (row 10 is the same residual, row 12 the same combined
+# segment). They are not double-flagged with SPLIT/COMBINED because all 7
+# already carry UNRECONCILED, which strictly dominates. Rows 10 and 18 are the
+# exception: HIERARCHY is not dominated, because it withholds the figure where
+# UNRECONCILED alone would let it render.
 #
-# Row 10 (Gross Margin Eliminations %) carries SIGN: the elim segment's revenue
-# is NEGATIVE in every cell (SEP26RF: -16.9 / -24.7 / -55.5 / -53.4 / -150.5),
-# so a margin over it is sign-inverted and means nothing. The numerator and
-# denominator are both real, so the row is is_live -- SIGN is what withholds it.
-#
-# Row 24 (EBITDA Key Litigation Costs) is worth its own note. It was a candidate
+# Row 22 (EBITDA Key Litigation Costs) is worth its own note. It was a candidate
 # to ship unflagged, because it ties to the cent for Jul. FC -- but the ROW 22
 # gate in tools/validate_vs_deck.py proved that is only true for 5 of the 9
 # shared vintages, so it keeps the flag. See ROW22_TIES there, and ISSUES.md 6.2.
 GAPS: dict[int, tuple[str, ...]] = {
-    4: (SPLIT,),
-    6: (COMBINED,),
-    # Gross Margin % -- rows 8-15, with 12 carrying the broken residual and 10
-    # the negative denominator.
-    **{i: (UNRECONCILED,) for i in range(8, 16) if i not in (10, 12)},
-    10: (UNRECONCILED, SIGN),
-    12: (UNRECONCILED, HIERARCHY),
-    # EBITDA -- rows 16-26 -- and EBITDA Margin (27).
-    16: (UNRECONCILED,),
+    3: (SPLIT,),
+    5: (COMBINED,),
+    # Gross Margin % -- rows 7-13, with 10 carrying the broken residual.
+    **{i: (UNRECONCILED,) for i in range(7, 14) if i != 10},
+    10: (UNRECONCILED, HIERARCHY),
+    # EBITDA -- rows 14-24 -- and EBITDA Margin (25).
+    14: (UNRECONCILED,),
+    15: (UNRECONCILED,),
+    16: (UNRECONCILED, PARTIAL),
     17: (UNRECONCILED,),
-    18: (UNRECONCILED, PARTIAL),
-    19: (UNRECONCILED,),
-    20: (UNRECONCILED, SPLIT, HIERARCHY),
-    21: (UNRECONCILED, SPLIT),
+    18: (UNRECONCILED, SPLIT, HIERARCHY),
+    19: (UNRECONCILED, SPLIT),
+    20: (UNRECONCILED,),
+    21: (UNRECONCILED, COMBINED),
     22: (UNRECONCILED,),
-    23: (UNRECONCILED, COMBINED),
+    23: (UNRECONCILED, ABSENT),
     24: (UNRECONCILED,),
-    25: (UNRECONCILED, ABSENT),
-    26: (UNRECONCILED,),
-    27: (UNRECONCILED,),
+    25: (UNRECONCILED,),
 }
 
 #: Rows whose live value cannot be trusted as a like-for-like of the deck.
@@ -235,7 +217,7 @@ UNRECONCILED_ROWS: frozenset[int] = frozenset(
 
 #: Gap kinds that withhold the figure unconditionally, because the number that
 #: would appear is not merely off, it is meaningless.
-BLOCKING_KINDS: frozenset[str] = frozenset({HIERARCHY, SIGN})
+BLOCKING_KINDS: frozenset[str] = frozenset({HIERARCHY})
 
 
 def blocking_reason(row: "Row") -> str | None:
@@ -266,19 +248,10 @@ def blocking_reason(row: "Row") -> str | None:
 # ---------------------------------------------------------------------------
 Segs = Mapping[str, float]
 
-# One North America definition on the whole page: the source's own
-# 'Total - North America Gross' segment, alone. Decided 2026-09-29 by Anoop
-# Tiwari (EPM owner) -- EPM cube CARDPLN is the business standard.
-#
-# Revenue and Gross Margin used to fold Topps Eliminations into North America
-# (_na_folded = na + elim) to reproduce the deck's printed 3,953.3. That made
-# the page disagree with EPM by exactly the eliminations (FY -150.5), and made
-# North America mean two different things in two sections of one page. The fold
-# is gone; Eliminations now has its own Revenue and Gross Margin row, as it
-# always did under EBITDA, so the block still adds up:
-#     na + elim + intl == phys
-_na_gross: Callable[[Segs], float] = lambda s: s["na"]
-_elim: Callable[[Segs], float] = lambda s: s["elim"]
+# Revenue / Gross Margin basis. The deck folds Topps Eliminations into North
+# America revenue (4,074.8 - 121.5 = 3,953.3, its exact printed value), so we
+# do too -- flagged with a footnote in the UI rather than silently.
+_na_folded: Callable[[Segs], float] = lambda s: s["na"] + s["elim"]
 _intl: Callable[[Segs], float] = lambda s: s["intl"]
 _phys: Callable[[Segs], float] = lambda s: s["phys"]
 _digital_residual: Callable[[Segs], float] = lambda s: s["exem"] - s["phys"]
@@ -286,6 +259,10 @@ _exem: Callable[[Segs], float] = lambda s: s["exem"]
 _fanlive: Callable[[Segs], float] = lambda s: s["fanlive"]
 _keylit: Callable[[Segs], float] = lambda s: s["keylit"]
 _grand_total: Callable[[Segs], float] = lambda s: s["exem"] + s["fanlive"] + s["keylit"]
+# EBITDA keeps North America and Eliminations apart -- unlike Revenue, the deck
+# gives Eliminations its own EBITDA row, so folding would double-count.
+_na_gross: Callable[[Segs], float] = lambda s: s["na"]
+_elim: Callable[[Segs], float] = lambda s: s["elim"]
 
 
 @dataclass(frozen=True)
@@ -293,13 +270,6 @@ class Row:
     """One line item of the statement."""
 
     idx: int
-    #: Position of the counterpart row in reference/deck_jul2026.json, or None
-    #: when the deck has no such row. Distinct from idx since 2026-09-29: the
-    #: page carries two rows the deck does not (Revenue Eliminations, Gross
-    #: Margin Eliminations %), so ROWS position no longer equals deck position.
-    #: tools/extract_deck.py regenerates that JSON wholesale, so the mapping
-    #: lives here rather than as placeholder rows inserted into the artifact.
-    deck_idx: int | None
     section: str
     label: str            # as shown in the statement table
     metric_label: str     # as shown in the Trends metric picker
@@ -322,12 +292,11 @@ class Row:
     def is_derivable(self) -> bool:
         """True when a figure may be shown at all.
 
-        Distinct from is_live. Five rows must never render: 21 (Corporate) and
-        25 (TCG) have no expression, while 12 and 20 (Digital) DO have one -- it
-        just evaluates over a residual the source has made nonsense of -- and 10
-        (Gross Margin Eliminations %) has both parts but a negative denominator.
-        Callers gate placeholders on this rather than on is_live, so a broken
-        residual can never reach the screen. See ISSUES.md sections 0 and 4.
+        Distinct from is_live. Four rows must never render: 19 (Corporate) and
+        23 (TCG) have no expression, while 10 and 18 (Digital) DO have one -- it
+        just evaluates over a residual the source has made nonsense of. Callers
+        gate placeholders on this rather than on is_live, so a broken residual
+        can never reach the screen. See ISSUES.md section 4, HIERARCHY.
         """
         return self.is_live and not (set(self.gaps) & BLOCKING_KINDS)
 
@@ -337,75 +306,97 @@ class Row:
         return self.is_live and UNRECONCILED not in self.gaps
 
 
-def _rev(idx: int, deck_idx: int | None, label: str, row_type: str, expr) -> Row:
-    return Row(idx, deck_idx, "Revenue", label,
-               label if row_type != "total" else "Total Revenue",
+def _rev(idx: int, label: str, row_type: str, expr) -> Row:
+    return Row(idx, "Revenue", label, label if row_type != "total" else "Total Revenue",
                row_type, False, "net_revenue", None, expr)
 
 
-def _gm(idx: int, deck_idx: int | None, label: str, metric_label: str,
-        row_type: str, expr) -> Row:
-    return Row(idx, deck_idx, "Gross Margin", label, metric_label, row_type,
-               True, "gross_margin", "net_revenue", expr)
+def _gm(idx: int, label: str, metric_label: str, row_type: str, expr) -> Row:
+    return Row(idx, "Gross Margin", label, metric_label, row_type, True,
+               "gross_margin", "net_revenue", expr)
 
 
-def _eb(idx: int, deck_idx: int | None, label: str, row_type: str, expr) -> Row:
-    return Row(idx, deck_idx, "EBITDA", label,
-               label if row_type != "total" else "Total EBITDA",
+def _eb(idx: int, label: str, row_type: str, expr) -> Row:
+    return Row(idx, "EBITDA", label, label if row_type != "total" else "Total EBITDA",
                row_type, False, "ebitda", None, expr)
 
 
-#: The statement's 28 rows. The first field is the app's own row index -- the one
-#: GAPS, _TILES and the Trends picker key on. The second is the position of the
-#: counterpart row in reference/deck_jul2026.json, which has 26 rows and no
-#: Eliminations line under Revenue or Gross Margin: those two get None and the
-#: deck gates skip them. Never reorder either numbering.
+#: The deck's 26 rows, in deck order. Index IS the deck's row index -- the
+#: reference JSON keys on it, so never reorder.
 ROWS: tuple[Row, ...] = (
     # -- Revenue (live, reconciled exactly) --------------------------------
-    _rev(0,  0,    "North America",            "sub",      _na_gross),
-    _rev(1,  1,    "International",            "sub",      _intl),
-    _rev(2,  None, "Eliminations",             "sub",      _elim),
-    _rev(3,  2,    "Total Physical Cards",     "subtotal", _phys),
-    _rev(4,  3,    "Digital",                  "sub",      _digital_residual),
-    _rev(5,  4,    "Total ex-Emerging Svcs",   "subtotal", _exem),
-    _rev(6,  5,    "Fanatics Live and Collect", "sub",     _fanlive),
-    _rev(7,  6,    "Total Revenue",            "total",    _grand_total),
+    _rev(0, "North America",          "sub",      _na_folded),
+    _rev(1, "International",          "sub",      _intl),
+    _rev(2, "Total Physical Cards",   "subtotal", _phys),
+    _rev(3, "Digital",                "sub",      _digital_residual),
+    _rev(4, "Total ex-Emerging Svcs", "subtotal", _exem),
+    _rev(5, "Fanatics Collect",       "sub",      _fanlive),
+    _rev(6, "Total Revenue",          "total",    _grand_total),
     # -- Gross Margin % (unreconciled) ------------------------------------
     # Each row's basis is the Revenue row directly above it, so the two blocks
     # read as parallel. The deck's table labels carry no '%'; its metric picker
-    # does. Row 10 is withheld: eliminations revenue is negative, so a margin
-    # over it is sign-inverted and meaningless (gap kind SIGN).
-    _gm(8,  7,    "North America",            "North America %",            "sub",      _na_gross),
-    _gm(9,  8,    "International",            "International %",            "sub",      _intl),
-    _gm(10, None, "Eliminations",             "Eliminations %",             "sub",      _elim),
-    _gm(11, 9,    "Total Physical Cards",     "Total Physical Cards %",     "subtotal", _phys),
-    _gm(12, 10,   "Digital",                  "Digital %",                  "sub",      _digital_residual),
-    _gm(13, 11,   "Total ex-Emerging Svcs",   "Total ex-Emerging Svcs %",   "subtotal", _exem),
-    _gm(14, 12,   "Fanatics Live and Collect", "Fanatics Live and Collect %", "sub",    _fanlive),
-    _gm(15, 13,   "Total Gross Margin",       "Total Gross Margin %",       "total",    _grand_total),
+    # does.
+    _gm(7,  "North America",          "North America %",          "sub",      _na_folded),
+    _gm(8,  "International",          "International %",          "sub",      _intl),
+    _gm(9,  "Total Physical Cards",   "Total Physical Cards %",   "subtotal", _phys),
+    _gm(10, "Digital",                "Digital %",                "sub",      _digital_residual),
+    _gm(11, "Total ex-Emerging Svcs", "Total ex-Emerging Svcs %", "subtotal", _exem),
+    _gm(12, "Fanatics Collect",       "Fanatics Collect %",       "sub",      _fanlive),
+    _gm(13, "Total Gross Margin",     "Total Gross Margin %",     "total",    _grand_total),
     # -- EBITDA (unreconciled) --------------------------------------------
-    _eb(16, 14,   "North America",            "sub",      _na_gross),
-    _eb(17, 15,   "International",            "sub",      _intl),
-    _eb(18, 16,   "Eliminations",             "sub",      _elim),
-    _eb(19, 17,   "Total Physical Cards",     "subtotal", _phys),
-    _eb(20, 18,   "Digital",                  "sub",      _digital_residual),
+    _eb(14, "North America",          "sub",      _na_gross),
+    _eb(15, "International",          "sub",      _intl),
+    _eb(16, "Eliminations",           "sub",      _elim),
+    _eb(17, "Total Physical Cards",   "subtotal", _phys),
+    _eb(18, "Digital",                "sub",      _digital_residual),
     # Corporate and TCG have NO expression: the view carries no segment for
     # either, so there is nothing to show and they render as an em-dash.
-    _eb(21, 19,   "Corporate",                "sub",      None),
-    _eb(22, 20,   "Total ex-Emerging Svcs",   "subtotal", _exem),
-    _eb(23, 21,   "Fanatics Live and Collect", "sub",     _fanlive),
-    _eb(24, 22,   "Key Litigation Costs",     "sub",      _keylit),
-    _eb(25, 23,   "TCG",                      "sub",      None),
-    _eb(26, 24,   "Total EBITDA",             "total",    _grand_total),
+    _eb(19, "Corporate",              "sub",      None),
+    _eb(20, "Total ex-Emerging Svcs", "subtotal", _exem),
+    _eb(21, "Fanatics Collect",       "sub",      _fanlive),
+    _eb(22, "Key Litigation Costs",   "sub",      _keylit),
+    _eb(23, "TCG",                    "sub",      None),
+    _eb(24, "Total EBITDA",           "total",    _grand_total),
     # -- EBITDA Margin % (unreconciled) -----------------------------------
-    Row(27, 25, "EBITDA Margin", "EBITDA Margin", "EBITDA Margin %", "margin",
+    Row(25, "EBITDA Margin", "EBITDA Margin", "EBITDA Margin %", "margin",
         True, "ebitda", "net_revenue", _grand_total),
 )
 
-assert len(ROWS) == 28, "26 deck rows plus Revenue and Gross Margin Eliminations"
+assert len(ROWS) == 26, "the deck has 26 rows"
 assert all(r.idx == i for i, r in enumerate(ROWS)), "ROWS must be in index order"
-_DECK_IDXS = [r.deck_idx for r in ROWS if r.deck_idx is not None]
-assert _DECK_IDXS == list(range(26)), "deck_idx must cover the deck's 26 rows once each"
+
+#: Hover text on the statement's row labels, keyed (section, label).
+ROW_TOOLTIPS: dict[tuple[str, str], str] = {
+    **{(sec, "North America"): (
+        "North America Gross Margins exclude eliminations; "
+        "Total Gross Margin includes eliminations.")
+       for sec in ("Revenue", "Gross Margin", "EBITDA")},
+    **{(sec, "Fanatics Collect"): "Fanatics Live (LB_306) + Marketplace / PWCC (LB_307)"
+       for sec in ("Revenue", "Gross Margin", "EBITDA")},
+}
+
+# ---------------------------------------------------------------------------
+# STG source
+# ---------------------------------------------------------------------------
+# Same 26 rows, same labels, same order -- only the expressions change, and they
+# come from queries.STG_ROW_MAP, so no LOB grouping lives in this file. Every
+# row is derivable and none is a structural gap any more: Digital, Corporate and
+# TCG have real LOBs in STG. So the legacy gap registry, which describes the
+# legacy table's limits, does not apply and is cleared.
+if queries.SOURCE == "STG":
+    def _terms_expr(terms: tuple[tuple[int, str], ...]) -> Callable[[Segs], float]:
+        return lambda s: sum(sign * s[key] for sign, key in terms)
+
+    _missing = [(r.section, r.label) for r in ROWS
+                if (r.section, r.label) not in queries.STG_ROW_MAP]
+    assert not _missing, f"STG_ROW_MAP has no entry for {_missing}"
+
+    ROWS = tuple(
+        replace(r, expr=_terms_expr(queries.STG_ROW_MAP[(r.section, r.label)]))
+        for r in ROWS
+    )
+    GAPS = {}
+    UNRECONCILED_ROWS = frozenset()
 
 # ---------------------------------------------------------------------------
 # Vintages
@@ -695,25 +686,17 @@ def _apply_compensation(segs: dict[tuple[str, str, str], dict[str, float]]) -> N
 # Deck reference lookup
 # ---------------------------------------------------------------------------
 def deck_value(
-    deck: Mapping[str, list[dict]], vintage: str, deck_idx: int | None,
-    period_key: str
+    deck: Mapping[str, list[dict]], vintage: str, row_idx: int, period_key: str
 ) -> float | None:
     """The deck's own figure for a cell, or None when the deck lacks it.
 
-    Takes a DECK position (Row.deck_idx), not a ROWS index -- the two diverged
-    on 2026-09-29 when Revenue and Gross Margin gained an Eliminations row that
-    the deck has no counterpart for. Those rows pass deck_idx=None and get None
-    back, which is the honest answer: there is nothing in the deck to compare.
-
-    The deck also predates Aug. FC and FY26 Actuals, so those legitimately
-    return None everywhere.
+    The deck predates Aug. FC and FY26 Actuals, so those legitimately return
+    None everywhere.
     """
-    if deck_idx is None:
-        return None
     rows = deck.get(vintage)
-    if not rows or deck_idx >= len(rows):
+    if not rows or row_idx >= len(rows):
         return None
-    row = rows[deck_idx]
+    row = rows[row_idx]
     if period_key == ANNUAL:
         return row.get("annual")
     if period_key in QUARTERS:

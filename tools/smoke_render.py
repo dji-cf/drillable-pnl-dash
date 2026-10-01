@@ -82,11 +82,8 @@ def check_grid(cube: tx.Cube) -> list[str]:
 
             rows = body_rows(html)
             data_rows = [r for r in rows if "section-hdr" not in r]
-            if len(data_rows) != len(tx.ROWS):
-                problems.append(
-                    f"{tag}: {len(data_rows)} data rows, "
-                    f"expected {len(tx.ROWS)}"
-                )
+            if len(data_rows) != 26:
+                problems.append(f"{tag}: {len(data_rows)} data rows, expected 26")
             hdr_rows = [r for r in rows if "section-hdr" in r]
             if len(hdr_rows) != 3:
                 problems.append(f"{tag}: {len(hdr_rows)} section headers, expected 3")
@@ -209,18 +206,18 @@ def check_charts(cube: tx.Cube) -> list[str]:
     # Degenerate inputs must not raise.
     for grain, subs in (("annual", []), ("monthly", ["Jan"])):
         try:
-            charts.build(cube, tx.ROWS[7], [], grain, subs).to_dict()
+            charts.build(cube, tx.ROWS[6], [], grain, subs).to_dict()
         except Exception as exc:  # noqa: BLE001
             problems.append(f"no-vintages {grain}: {type(exc).__name__}: {exc}")
     try:
-        charts.build(cube, tx.ROWS[7], vintages, "monthly", []).to_dict()
+        charts.build(cube, tx.ROWS[6], vintages, "monthly", []).to_dict()
     except Exception as exc:  # noqa: BLE001
         problems.append(f"no-subs monthly: {type(exc).__name__}: {exc}")
 
     # The deck's is_pct bug: a percent metric must be labelled '%', not '$'.
-    pct_spec = charts.build(cube, tx.ROWS[15], vintages, "annual", []).to_dict()
+    pct_spec = charts.build(cube, tx.ROWS[13], vintages, "annual", []).to_dict()
     if '%' not in str(pct_spec.get("layer", pct_spec)):
-        problems.append("row15 (Total Gross Margin %) is not labelled as a percent")
+        problems.append("row13 (Total Gross Margin %) is not labelled as a percent")
     if charts.bar_label(54.76, True) != "55%":
         problems.append(f"bar_label pct: {charts.bar_label(54.76, True)!r} != '55%'")
     if charts.bar_label(5184.0, False) != "$5.2B":

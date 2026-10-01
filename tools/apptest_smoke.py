@@ -123,9 +123,8 @@ def main() -> None:
         )
 
     # -- every Trends metric ---------------------------------------------
-    # Only the rows that cannot be derived at all are withheld: 21/25 have no
-    # expression, 12/20 have one over a residual the source has broken, and 10
-    # (Gross Margin Eliminations %) has a negative denominator. The 20
+    # Only the rows that cannot be derived at all are withheld: 19/23 have no
+    # expression, 10/18 have one over a residual the source has broken. The 19
     # unreconciled cost rows must now PLOT -- that is what changed when the
     # diagnostic toggle went away, so both directions are asserted.
     expected_withheld = sum(1 for r in tx.ROWS if not r.is_derivable)
