@@ -42,7 +42,7 @@ import os
 #:     PNL_SOURCE=STG streamlit run streamlit_app.py
 #: LEGACY stays the default (and the deployed behaviour) until the STG gates in
 #: tools/validate_vs_deck.py pass and Maya says go.
-SOURCE: str = os.environ.get("PNL_SOURCE", "LEGACY").upper()
+SOURCE: str = os.environ.get("PNL_SOURCE", "STG").upper()
 if SOURCE not in ("LEGACY", "STG"):
     raise ValueError(f"PNL_SOURCE must be LEGACY or STG, got {SOURCE!r}")
 

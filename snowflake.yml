@@ -53,10 +53,10 @@ entities:
     # POWER_ANALYST_ORACLE_PROD already owns Streamlit apps and can read
     # FCT_EPM + use ANALYTICS_WAREHOUSE.
     identifier:
-      name: DRILLABLE_PNL_DASH
+      name: DRILLABLE_PNL_DASH_STG
       database: ORACLE_DATA_PROD
       schema: SANDBOX
-    title: "FCT — Drillable P&L (Collectibles Forecast)"
+    title: "FCT — Drillable P&L (Collectibles Forecast) — STG PREVIEW"
     stage: streamlit_stage            # created automatically if absent
     runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
     compute_pool: SYSTEM_COMPUTE_POOL_CPU
