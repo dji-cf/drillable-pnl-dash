@@ -12,8 +12,12 @@ markup -- the dark header band and the KPI tiles.
 
 Everything from ``table`` down to ``tr.collapsed`` is ported from the source
 deck (HTML lines 43-98) close to verbatim, because the pixel fidelity of the
-statement is the point of the exercise. The one addition is ``tr.gap-row``, for
-the four rows the source cannot express -- the deck had no notion of those.
+statement is the point of the exercise. The additions, none of them in the
+deck: ``tr.gap-row`` for the rows the legacy source cannot express;
+``td.gact`` / ``th.ph-act`` for change cells greyed because both vintages hold
+the same actuals; ``.ytd-col``; and an OPAQUE sticky label column. The deck's
+``td.lbl { background: inherit }`` inherited a transparent <tr> on detail rows,
+so figures scrolled under the frozen labels showed straight through them.
 """
 from __future__ import annotations
 
@@ -23,11 +27,14 @@ import streamlit as st
 # Inside the component's shadow DOM
 # ---------------------------------------------------------------------------
 TABLE_CSS = """
-:host { display: block; }
+:host { display: block; max-width: 100%; min-width: 0; }
 * , *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+.pnl, .mount { width: 100%; max-width: 100%; min-width: 0; }
 
 .table-wrap {
   background: #fff;
+  max-width: 100%;
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0,0,0,.08);
   overflow-x: auto;
@@ -50,6 +57,22 @@ thead tr.group-row th.lbl-th {
 thead tr.group-row th.grp-comp   { background: #2d4a6e; color: #a8c0dd; border-left: 2px solid #1a2b4a; }
 thead tr.group-row th.grp-curr   { background: #1a3560; color: #e0eaf7; border-left: 2px solid #1a2b4a; }
 thead tr.group-row th.grp-growth { background: #1e3a4a; color: #7dd3c8; border-left: 2px solid #1a2b4a; }
+
+/* % / $ toggle in the change header (not in the deck). Padding is explicit
+   because the reset at the top of this sheet zeroes it. */
+.dmode {
+  display: inline-flex; margin-left: 10px; vertical-align: middle;
+  border: 1px solid rgba(125,211,200,.5); border-radius: 5px; overflow: hidden;
+}
+.dmode button {
+  font: inherit; font-size: 10.5px; font-weight: 800; line-height: 16px;
+  padding: 0 8px; background: transparent; color: #7dd3c8;
+  border: 0; cursor: pointer;
+}
+.dmode button + button { border-left: 1px solid rgba(125,211,200,.5); }
+.dmode button.on { background: #7dd3c8; color: #1e3a4a; cursor: default; }
+.dmode button:not(.on):not(:disabled):hover { background: rgba(125,211,200,.18); }
+.dmode button:disabled { opacity: .5; cursor: default; }
 thead tr.group-row th.grp-solo   { background: #1a3560; color: #e0eaf7; border-left: 2px solid #1a2b4a; }
 
 /* ── Period sub-header ── */
@@ -69,6 +92,8 @@ thead tr.period-row th.ph-growth { background: #1a3344; color: #6bc7be; }
 thead tr.period-row th.ph-solo   { background: #1f3d6a; color: #b8d0ec; }
 thead tr.period-row th.pf        { border-left: 2px solid #1a2b4a; }
 thead tr.period-row th.fy-col    { font-style: italic; }
+thead tr.period-row th.ytd-col   { font-style: italic; }
+thead tr.period-row th.ph-act    { color: rgba(107,199,190,.4); }
 
 /* ── Body ── */
 tbody tr { transition: background .08s; }
@@ -80,7 +105,11 @@ td {
 }
 td.lbl {
   text-align: left; padding-left: 10px; position: sticky; left: 0; z-index: 2;
-  background: inherit; border-right: 2px solid #d4daea !important;
+  /* Opaque. Row-type rules below (tr.row-* td) out-specify this and keep their
+     tints. The shadow stands in for the border, which border-collapse leaves
+     behind on the table grid when the cell sticks. */
+  background: #fff; border-right: 2px solid #d4daea !important;
+  box-shadow: 3px 0 4px -2px rgba(26,43,74,.16);
   color: #2d4063; min-width: 210px;
 }
 td.pf { border-left: 2px solid #d4daea !important; }
@@ -90,6 +119,8 @@ td.gc    { font-weight: 700; font-size: 11.5px; background: #f4f7fb; }
 td.gpos  { color: #16a34a; background: #f0faf3; }
 td.gneg  { color: #dc2626; background: #fff5f5; }
 td.gflat { color: #8a9ab8; background: #f4f7fb; }
+/* Same actuals on both sides: zero by construction, so muted, not '+0%'. */
+td.gc.gact { color: #c3cad6; font-weight: 400; cursor: default; }
 
 tr.section-hdr td {
   background: #edf0f8 !important; font-weight: 800; font-size: 11px;

@@ -14,8 +14,8 @@ the app moved off the view onto the base table.
 Nine gates:
 
   REVENUE      every live Revenue cell within $0.05M of the deck, across the 9
-               shared vintages x every period x 7 rows. Aug. FC and FY26
-               Actuals are skipped -- they postdate the deck.
+               shared vintages x every period x 7 rows. Vintages newer than
+               the deck (Aug 2026 FC on) are skipped -- they postdate it.
   ADDITIVITY   North America (Topps-folded) + International - Total Physical
                Cards == 0, per vintage per period.
   FORMATTERS   fmt_m / fmt_pct / delta_fmt against values read off the deck.
@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 # Import the app's own modules, so this validates what ships rather than a copy.
@@ -59,6 +60,26 @@ TOLERANCE_DOLLARS = 50_000.0        # $0.05M, per cell
 ANNUAL_NOTE_THRESHOLD = 1.00        # report annual drift above a dollar
 CONN_NAME = os.getenv("SNOWFLAKE_DEFAULT_CONNECTION_NAME", "HIDR_PROD")
 DECK_JSON = Path(__file__).resolve().parent.parent / "reference" / "deck_jul2026.json"
+
+#: The fiscal year every reference deck in reference/ describes. The deck JSONs
+#: key forecasts the way the deck did ('Jul. FC'); the app's keys carry the
+#: year ('Jul 2026 FC'). _deck_keys() translates on load, so the artefacts stay
+#: exactly as extracted.
+DECK_YEAR = 2026
+
+
+def _deck_keys(deck: dict) -> dict:
+    """Rename a deck JSON's 'Mon. FC' keys to the app's 'Mon YYYY FC'."""
+    out = {}
+    for key, value in deck.items():
+        mon = key[:-4] if key.endswith(". FC") else None
+        out[f"{mon} {DECK_YEAR} FC" if mon in tx.MONTHS else key] = value
+    return out
+
+
+def _fc(mon: str) -> str:
+    """'Jul' -> the app's key for that month's FY26 forecast, 'Jul 2026 FC'."""
+    return f"{mon} {DECK_YEAR} FC"
 
 # ---------------------------------------------------------------------------
 # Documented drift between the view and the deck
@@ -134,7 +155,7 @@ KNOWN_COGS_MISTAG: dict[tuple[str, str, str], str] = {
 #: Every one of those differences is PRE-EXISTING: verified against a cube built
 #: with the Compensation rows dropped, the correction introduces none of them.
 ROW22_TIES: frozenset[str] = frozenset(
-    {"2026B", "Apr. FC", "May. FC", "Jun. FC", "Jul. FC"}
+    {"2026B", _fc("Apr"), _fc("May"), _fc("Jun"), _fc("Jul")}
 )
 
 #: Cost rows permitted to report is_reconciled. Empty, and the ROW 22 gate is
@@ -267,7 +288,7 @@ def _revenue_rows() -> list[tx.Row]:
 
 
 def _shared_vintages(cube: tx.Cube, deck: dict) -> list[str]:
-    """Vintages present in both. Aug. FC and FY26 Actuals postdate the deck."""
+    """Vintages present in both. Aug 2026 FC onward postdate the deck."""
     return [v for v in cube.vintages if v in deck]
 
 
@@ -431,6 +452,13 @@ def check_formatters() -> list[str]:
         ("delta_fmt", tx.delta_fmt(100.0, 100.0, False, has_comp=False), None),
         ("delta_fmt", tx.delta_fmt(None, 100.0, False), None),
         ("delta_fmt", tx.delta_fmt(100.0, None, False), None),
+        # usd mode -- not in the deck, so pinned here: $M difference, fmt_m's
+        # parentheses for negatives, margins still bps.
+        ("delta_fmt", (tx.delta_fmt(142e6, 100e6, False, mode="usd") or {}).get("text"), "+$42"),
+        ("delta_fmt", (tx.delta_fmt(95e6, 100e6, False, mode="usd") or {}).get("text"), "($5)"),
+        ("delta_fmt", (tx.delta_fmt(95e6, 100e6, False, mode="usd") or {}).get("cls"), "gneg"),
+        ("delta_fmt", (tx.delta_fmt(100e6, 0.0, False, mode="usd") or {}).get("text"), "+$100"),
+        ("delta_fmt", (tx.delta_fmt(0.5476, 0.4617, True, mode="usd") or {}).get("text"), "+859 bps"),
     ]
     return [
         f"{name}: got {got!r}, want {want!r}"
@@ -685,8 +713,11 @@ STG_MAY_JSON = DECK_JSON.parent / "deck_pdf_jul_jun_may.json"
 # FY25 Actuals restatement on LB_392 / CO_31000 / ICP_32002 revenue: the same
 # Apr/May/Jun reallocation documented in KNOWN_REALLOCATIONS[("2025A", 0)]
 # (-6,179,159.04 / -4,830,806.60 / +11,009,965.64 here, netting to zero). Only
-# these three 2025A months are exempt, and only while the value matches to
-# $0.01M; every other vintage and period stays gated.
+# these three months are exempt, and only while the value matches to $0.01M;
+# every other period stays gated. Keyed on 2025A, but it also covers the FY25
+# forecasts (Oct/Nov/Dec 2025 FC, admitted since vintages became year-aware)
+# in their ACTUAL months only -- an RF snapshot's closed months are the Actual
+# scenario's, so they carry the same restatement.
 _INTL_ELIMS_FY25_REALLOC: dict[tuple[str, str], float] = {
     ("2025A", "Apr"): -6.18e6,
     ("2025A", "May"): -4.83e6,
@@ -698,16 +729,16 @@ _PDF_SECTIONS = {"revenue": "Revenue", "gm_pct": "Gross Margin", "adj_ebitda": "
 _PDF_LABELS = {
     ("Revenue", "north_america"): "North America", ("Revenue", "international"): "International",
     ("Revenue", "total_physical_cards"): "Total Physical Cards", ("Revenue", "digital"): "Digital",
-    ("Revenue", "total_ex_emerging"): "Total ex-Emerging Svcs",
+    ("Revenue", "total_ex_emerging"): "Subtotal",
     ("Revenue", "fanatics_collect"): "Fanatics Collect", ("Revenue", "total"): "Total Revenue",
     ("Gross Margin", "north_america"): "North America", ("Gross Margin", "international"): "International",
     ("Gross Margin", "total_physical_cards"): "Total Physical Cards", ("Gross Margin", "digital"): "Digital",
-    ("Gross Margin", "total_ex_emerging"): "Total ex-Emerging Svcs",
+    ("Gross Margin", "total_ex_emerging"): "Subtotal",
     ("Gross Margin", "fanatics_collect"): "Fanatics Collect", ("Gross Margin", "total"): "Total Gross Margin",
     ("EBITDA", "north_america"): "North America", ("EBITDA", "international"): "International",
     ("EBITDA", "eliminations"): "Eliminations", ("EBITDA", "total_physical_cards"): "Total Physical Cards",
     ("EBITDA", "digital"): "Digital", ("EBITDA", "corporate"): "Corporate",
-    ("EBITDA", "total_ex_emerging"): "Total ex-Emerging Svcs",
+    ("EBITDA", "total_ex_emerging"): "Subtotal",
     ("EBITDA", "fanatics_collect"): "Fanatics Collect", ("EBITDA", "key_litigation"): "Key Litigation Costs",
     ("EBITDA", "tcg"): "TCG", ("EBITDA", "total"): "Total EBITDA",
 }
@@ -727,8 +758,14 @@ _STG_PERIODS = ("Q1", "Q2", "Q3", "Q4", tx.ANNUAL)
 _EB_LEAVES = ("North America", "International", "Eliminations", "Digital",
               "Corporate", "Fanatics Collect", "Key Litigation Costs", "TCG")
 
+#: The decks still print "Total ex-Emerging Svcs"; the app renamed it "Subtotal"
+#: (Forecast Dashboard meeting, 2026-10-05). reference/deck_pdf_p7.json keeps the
+#: deck's own label, as transcribed, and is translated here.
+_DECK_LABEL_ALIASES = {"Total ex-Emerging Svcs": "Subtotal"}
+
 
 def _row(section: str, label: str) -> tx.Row:
+    label = _DECK_LABEL_ALIASES.get(label, label)
     return next(r for r in tx.ROWS if r.section == section and r.label == label)
 
 
@@ -767,7 +804,7 @@ def check_stg_deck(cube: tx.Cube, label: str,
             checked += 1
             ok = got is not None and abs(got - want_v) <= tol
             shown_want = _fmt_cell(row, want_v)
-            line = (f"{'PASS' if ok else 'FAIL'}  {vintage:<8} {section[:6]:<6} "
+            line = (f"{'PASS' if ok else 'FAIL'}  {vintage:<11} {section[:6]:<6} "
                     f"{row_label:<24} {pk:<6} dash {_fmt_cell(row, got):>9}  "
                     f"deck {shown_want:>9}")
             log.append(line)
@@ -792,7 +829,7 @@ def check_stg_identities(cube: tx.Cube) -> tuple[int, list[str]]:
     checked = 0
     total = _row("EBITDA", "Total EBITDA")
     phys = _row("EBITDA", "Total Physical Cards")
-    exem = _row("EBITDA", "Total ex-Emerging Svcs")
+    exem = _row("EBITDA", "Subtotal")
     leaves = {l: _row("EBITDA", l) for l in _EB_LEAVES}
     base = [k for _, k in queries.STG_ROW_MAP[("EBITDA", "Total EBITDA")]]
     eb_line = "ebitda"
@@ -822,6 +859,9 @@ def check_stg_identities(cube: tx.Cube) -> tuple[int, list[str]]:
             if rev is not None:
                 ie = rev["ie"]
                 exempt = _INTL_ELIMS_FY25_REALLOC.get((v, pk))
+                if (exempt is None and cube.fiscal_year.get(v) == "FY25"
+                        and cube.is_actual(v, pk)):
+                    exempt = _INTL_ELIMS_FY25_REALLOC.get(("2025A", pk))
                 if exempt is not None and abs(ie - exempt) <= 10_000:
                     continue
                 if ie > 1.0 or abs(ie) >= 10_000_000:
@@ -838,14 +878,14 @@ def main_stg() -> None:
     print(f"fetched {len(df):,} rows / {len(cube.vintages)} vintages: "
           f"{', '.join(cube.vintages)}")
 
-    pdf = json.loads(STG_DECK_JSON.read_text(encoding="utf-8"))
-    jul = json.loads(DECK_JSON.read_text(encoding="utf-8"))
+    pdf = _deck_keys(json.loads(STG_DECK_JSON.read_text(encoding="utf-8")))
+    jul = _deck_keys(json.loads(DECK_JSON.read_text(encoding="utf-8")))
     may = json.loads(STG_MAY_JSON.read_text(encoding="utf-8"))
-    runs = [("DECK p.7", "Sep. FC", pdf["Sep. FC"], True),
-            ("DECK p.7", "Aug. FC", pdf["Aug. FC"], True),
-            ("DECK JUL", "Jul. FC", _deck_json_expected(jul, "Jul. FC"), False),
-            ("DECK JUL", "Jun. FC", _deck_json_expected(jul, "Jun. FC"), False),
-            ("DECK MAY", "May. FC", _pdf_json_expected(may["MAY26RF"]), True)]
+    runs = [("DECK p.7", _fc("Sep"), pdf[_fc("Sep")], True),
+            ("DECK p.7", _fc("Aug"), pdf[_fc("Aug")], True),
+            ("DECK JUL", _fc("Jul"), _deck_json_expected(jul, _fc("Jul")), False),
+            ("DECK JUL", _fc("Jun"), _deck_json_expected(jul, _fc("Jun")), False),
+            ("DECK MAY", _fc("May"), _pdf_json_expected(may["MAY26RF"]), True)]
 
     failed = False
     multi = df[(df["max_n_entity"] > 1) | (df["max_n_icp"] > 1)]
@@ -857,7 +897,7 @@ def main_stg() -> None:
     for name, vintage, exp, scale in runs:
         n, fails, log = check_stg_deck(cube, name, exp, vintage, scale)
         all_logs += log
-        print(f"\n{name} {vintage:<8} {'FAIL' if fails else 'pass'}  "
+        print(f"\n{name} {vintage:<11} {'FAIL' if fails else 'pass'}  "
               f"({n - len(fails)}/{n} cells tie)")
         for f in fails:
             print(f"  {f}")
@@ -872,7 +912,7 @@ def main_stg() -> None:
 
     print(f"  INTL ELIMS exempt (FY25 restatement, KNOWN_REALLOCATIONS): "
           f"{', '.join(f'{v} {p}' for v, p in _INTL_ELIMS_FY25_REALLOC)}")
-    log_path = Path("/tmp/validate_stg_cells.log")
+    log_path = Path(tempfile.gettempdir()) / "validate_stg_cells.log"
     log_path.write_text("\n".join(all_logs) + "\n", encoding="utf-8")
     print(f"per-cell log ({len(all_logs)} cells): {log_path}")
     print("\n" + ("FAILED" if failed else "ALL GATES PASS"))
@@ -886,7 +926,7 @@ def main() -> None:
         raise SystemExit("run tools/extract_deck.py first")
     import json
 
-    deck = json.loads(DECK_JSON.read_text(encoding="utf-8"))
+    deck = _deck_keys(json.loads(DECK_JSON.read_text(encoding="utf-8")))
 
     print(f"connection: {CONN_NAME}")
     df = fetch()

@@ -3,8 +3,9 @@
 ONE query, no bind parameters, run once per session and pivoted in pandas.
 That is a deliberate design choice for three reasons:
 
-1.  It is small. 11 vintages x 17 periods x 4 P&L lines is ~730 rows, so
-    fetching the whole cube costs less than fetching slices on demand.
+1.  It is small. 15 vintages x 17 periods x 3-4 P&L lines is ~750-1,000
+    rows, so fetching the whole cube costs less than fetching slices on
+    demand.
 2.  Both dropdowns and all three grain toggles become client-side. Changing the
     forecast, the comparison, or Annual/Quarterly/Monthly does not touch
     Snowflake at all.
@@ -17,7 +18,7 @@ That is a deliberate design choice for three reasons:
 GRAIN. The view already materializes all three grains (PERIOD_TYPE in
 'MONTH' / 'QUARTER' / 'YEAR', 17 periods per fiscal year), so nothing is
 summed up in Python -- quarters and the year total come from the source, which
-is what makes the 7-month FY26 Actuals partial (Q3 = Jul only, no Q4) fall out
+is what makes a partial-year Actuals vintage (FY26: Jan-Aug, no Q4) fall out
 correctly instead of being fabricated.
 
 WHY THE BASE TABLE, NOT THE VIEW. See BASE below. The view drops the one line
@@ -138,8 +139,9 @@ BASE = "ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_BY_LOB"
 VIEW = "ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_BY_LOB_V"   # parity check only
 
 # Lifted verbatim from the view's DDL. 'Rolling Forecast' fails the RLIKE and
-# yields NULL, which the >= DATE '2026-01-01' floor in _VINTAGE_FILTER then
-# excludes -- the same behaviour the view gave us.
+# yields NULL, which _VINTAGE_FILTER then excludes: its fiscal-year match
+# (FISCAL_YEAR = 'FY' || as-of year) is never true for a NULL as-of date --
+# the same behaviour the view gave us.
 _FORECAST_ASOF = """
       CASE
         WHEN SCENARIO RLIKE '^[A-Z]{3}[0-9]{2}RF$'
@@ -151,35 +153,45 @@ _FORECAST_ASOF = """
 # ---------------------------------------------------------------------------
 # Vintage selection
 # ---------------------------------------------------------------------------
-# A "vintage" is a (scenario, fiscal_year) pair, not a scenario -- the deck's
-# '2025A' is the Actual scenario read at FY25 while '2026B' and every '<Mon>. FC'
-# is read at FY26. Keys are derived, not enumerated, so a future SEP26RF shows up
-# as 'Sep. FC' with no code change.
+# A "vintage" is a (scenario, fiscal_year) pair, not a scenario: '2025A' is the
+# Actual scenario read at FY25, '2026B' the Budget read at FY26, and
+# 'Sep 2026 FC' is SEP26RF read at FY26. Every key carries its year and nothing
+# is enumerated, so JAN27RF shows up as 'Jan 2027 FC' and FY27's budget as
+# '2027B' with no code change. transforms.vintage_parts() is the one parser of
+# these keys.
 #
-# The FORECAST_ASOF_DATE >= '2026-01-01' floor is what excludes three vintages
-# that would otherwise pollute the dropdown:
-#   * 'Rolling Forecast' -- VERSION='Working', FORECAST_ASOF='ROLLING_FORECAST',
-#     NULL as-of date. It covers only 8 of 12 FY26 months.
-#   * DEC25RF (as-of 2025-12-31) -- carries FY26 rows but $0 revenue.
-#   * OCT25RF / NOV25RF -- FY25-only, already excluded by FISCAL_YEAR.
+# A forecast is read ONLY at the fiscal year of its own as-of date. That is not
+# cosmetic: every RF scenario is an ~18-month rolling horizon (verified
+# 2026-10-06 -- JAN26RF carries 6 FY27 months, SEP26RF all 12 FY27 months plus
+# one FY28 month), so without the year match SEP26RF's FY26 and FY27 rows would
+# collide on one key. The same rule excludes:
+#   * 'Rolling Forecast' -- NULL as-of date, so the equality is never true;
+#   * DEC25RF's FY26 rows -- $0 revenue, as-of year 2025.
+#
+# FIRST_FISCAL_YEAR is a history floor, not a label: FY23/FY24 actuals exist in
+# both sources and are left out. Which of the admitted vintages are offered on
+# screen -- partial-year actuals and "retired" forecasts/budgets are not -- is
+# decided in transforms (Cube.visible), from the data.
+FIRST_FISCAL_YEAR = "FY25"
+
 _VINTAGE_KEY = """
       CASE
         WHEN SCENARIO_LABEL = 'ACTUAL' THEN '20' || SUBSTR(FISCAL_YEAR, 3, 2) || 'A'
         WHEN SCENARIO_LABEL = 'BUDGET' THEN '20' || SUBSTR(FISCAL_YEAR, 3, 2) || 'B'
-        ELSE MONTHNAME(FORECAST_ASOF_DATE) || '. FC'
+        ELSE MONTHNAME(FORECAST_ASOF_DATE) || ' '
+             || TO_CHAR(YEAR(FORECAST_ASOF_DATE)) || ' FC'
       END"""
 
-_VINTAGE_FILTER = """
-         (SCENARIO_LABEL = 'ACTUAL'   AND FISCAL_YEAR IN ('FY25', 'FY26'))
-      OR (SCENARIO_LABEL = 'BUDGET'   AND FISCAL_YEAR = 'FY26')
-      OR (SCENARIO_LABEL = 'FORECAST' AND FISCAL_YEAR = 'FY26'
-          AND FORECAST_ASOF_DATE >= DATE '2026-01-01')"""
+_VINTAGE_FILTER = f"""
+         (SCENARIO_LABEL IN ('ACTUAL', 'BUDGET') AND FISCAL_YEAR >= '{FIRST_FISCAL_YEAR}')
+      OR (SCENARIO_LABEL = 'FORECAST' AND FISCAL_YEAR >= '{FIRST_FISCAL_YEAR}'
+          AND FISCAL_YEAR = 'FY' || TO_CHAR(FORECAST_ASOF_DATE, 'YY'))"""
 
 # ---------------------------------------------------------------------------
 # is_actual_month
 # ---------------------------------------------------------------------------
 # The deck hardcodes its 26A/26F month suffixes (MONTH_LBL, source JS line 237),
-# so selecting Jan. FC there still labels Jan-Jun as actuals. This computes them
+# so selecting the Jan FC there still labels Jan-Jun as actuals. This computes them
 # instead. Verified: for JUL26RF (as-of 2026-07-31) it yields Jan-Jun TRUE and
 # Jul-Dec FALSE, reproducing the deck's labels exactly -- while also being
 # correct for every other vintage.
@@ -483,7 +495,7 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     # file 248-311 (CO_31000 Apps + CO_31032 Blockchain)
     ("Revenue", "Digital"):                _DIGITAL,
     # file 601 = NASE+INTL+DIGITAL+GCP+ELIMS+CORP OH (+HEDGE, 0.0 FY26F)
-    ("Revenue", "Total ex-Emerging Svcs"): _NA_REV + _INTL + _DIGITAL + _CORP_REV,
+    ("Revenue", "Subtotal"):               _NA_REV + _INTL + _DIGITAL + _CORP_REV,
     # file 446-465 LIVE + 490-509 PWCC
     ("Revenue", "Fanatics Collect"):       _FANCOL,
     # file 579 -- every block.
@@ -498,7 +510,7 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     ("Gross Margin", "International"):          _INTL,
     ("Gross Margin", "Total Physical Cards"):   _NA_REV + _INTL,
     ("Gross Margin", "Digital"):                _DIGITAL,
-    ("Gross Margin", "Total ex-Emerging Svcs"): _NA_REV + _INTL + _DIGITAL + _CORP_REV,
+    ("Gross Margin", "Subtotal"):               _NA_REV + _INTL + _DIGITAL + _CORP_REV,
     ("Gross Margin", "Fanatics Collect"):       _FANCOL,
     ("Gross Margin", "Total Gross Margin"):     _ALL_LOBS,
     # -- Adj. EBITDA (= AEBITDA in the file) -------------------------------
@@ -516,7 +528,7 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     # file 468-488 Corporate OH = LB_301 @ CC_30000, less file 568 (TCG,
     # CC_70123) and less file 624 "Pisa Costs" (CC_40313 / AC_61002).
     ("EBITDA", "Corporate"):              _CORP_EB,
-    ("EBITDA", "Total ex-Emerging Svcs"): _PHYS_EB + _DIGITAL + _CORP_EB,
+    ("EBITDA", "Subtotal"):               _PHYS_EB + _DIGITAL + _CORP_EB,
     # file 446-465 LIVE + 490-509 PWCC
     ("EBITDA", "Fanatics Collect"):       _FANCOL,
     # file 624 Pisa Costs + 627 NASE Key Litigations. Costs, so negated.

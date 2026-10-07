@@ -61,7 +61,7 @@ CONN_NAME = os.getenv("SNOWFLAKE_DEFAULT_CONNECTION_NAME", "HIDR_PROD")
 #: The cell from the bug report, in both of its definitions. Which one applies
 #: depends on queries.SOURCE, because Finance changed the definition underneath
 #: this test on 2026-09-30 and BOTH numbers are correct for their own source.
-ANCHOR_VINTAGE = "Jul. FC"
+ANCHOR_VINTAGE = "Jul 2026 FC"
 ANCHOR_SEGMENT = "na"
 ANCHOR_PERIOD = "Q1"
 
@@ -216,7 +216,7 @@ def main() -> None:
     anchor_problems = check_anchor(cube)
     _want, _tol, _label = _anchor_for_source()
     print(f"ANCHOR       {'FAIL' if anchor_problems else 'pass'}  "
-          f"(Q1 FY26 Jul. FC North America EBITDA == "
+          f"(Q1 FY26 {ANCHOR_VINTAGE} North America EBITDA == "
           f"{_want / 1e6:,.4f}M +/- {_tol / 1e6:g}M, {_label})")
     for p in anchor_problems:
         print(f"  {p}")
