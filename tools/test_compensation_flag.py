@@ -15,16 +15,19 @@ difference being ACX_Compensation being added back on top.
 
 Four gates:
 
-  ANCHOR       the exact cell from the bug report: Q1 FY26 JUL26RF North America
-               EBITDA == 195.3216765600, to $0.0001. The one hardcoded external
-               anchor -- this is the EPM figure, not something re-derived here.
+  ANCHOR       Q1 FY26 JUL26RF North America EBITDA, against whichever
+               definition the active SOURCE is built on. Source-dependent on
+               purpose -- see the two anchor constants below.
   NO ADD-BACK  every (vintage, line, period, segment) cell in the cube equals the
                matching seg_* column of queries.MASTER_SQL. The general form of
                ANCHOR, and what actually proves nothing is added anywhere.
   NO LEFTOVER  no _compensation keys survive in the cube.
   FLAG ON      setting the flag True restores the add-back at exactly the
                Compensation amount -- so this documents the old behaviour rather
-               than deleting it.
+               than deleting it. LEGACY ONLY: STG derives Gross Margin and
+               EBITDA from account lines and never passes an ACX_ subtotal
+               through, so there is no add-back to restore and no
+               ACX_Compensation cell to restore it from.
 
 The source side is taken from MASTER_SQL's own output rather than from a second
 query. That is deliberate: MASTER_SQL already applies the vintage filter and
@@ -49,13 +52,34 @@ import queries  # noqa: E402
 import transforms as tx  # noqa: E402
 
 TOLERANCE = 0.0001
+#: STG anchor tolerance. The decks print $M to one decimal place, so the anchor
+#: can only be asserted to 0.1M -- unlike the LEGACY anchor, which is an exact
+#: figure read out of EPM and is therefore held to $0.0001.
+TOLERANCE_STG = 0.1e6
 CONN_NAME = os.getenv("SNOWFLAKE_DEFAULT_CONNECTION_NAME", "HIDR_PROD")
 
-#: The cell from the bug report. EPM CARDPLN is the business standard.
+#: The cell from the bug report, in both of its definitions. Which one applies
+#: depends on queries.SOURCE, because Finance changed the definition underneath
+#: this test on 2026-09-30 and BOTH numbers are correct for their own source.
 ANCHOR_VINTAGE = "Jul. FC"
 ANCHOR_SEGMENT = "na"
 ANCHOR_PERIOD = "Q1"
+
+#: LEGACY: the EPM CARDPLN figure at Total Cost Center (LOB
+#: 'Total - North America Gross', account ACX_EBITDA, CO_31000, all other
+#: dimensions Total), which was the business standard when the 2026-09-29
+#: APPLY_COMPENSATION_ADJUSTMENT = False change was made. Still the right gate
+#: for LEGACY, which passes the source's own ACX_ subtotals straight through.
 ANCHOR_EBITDA = 195.3216765600e6
+
+#: STG: 286.1M. Finance replaced the Total-Cost-Center definition on 2026-09-30
+#: (Anoop: use Megan Coleman's sheet logic), which is what the STG row map and
+#: the derived Gross Margin / EBITDA in queries.py implement. Corroborated three
+#: ways: the HTML deck gives Jul FC Q1 NA EBITDA 286.1; the 2026-07 deck p.9
+#: gives 286; and the 2026-09 deck p.7 gives 286 for Q1 26A. The ~+90.74M step
+#: up from the LEGACY anchor is the KNOWN cost-centre double-count gap, not a
+#: regression -- do not "fix" either number to make them agree.
+ANCHOR_EBITDA_STG = 286.1e6
 
 
 def _fetch(sql: str) -> pd.DataFrame:
@@ -89,17 +113,26 @@ def _source_lookup(master: pd.DataFrame) -> dict[tuple[str, str, str, str], floa
     return out
 
 
+def _anchor_for_source() -> tuple[float, float, str]:
+    """(expected, tolerance, provenance label) for the active source."""
+    if queries.SOURCE == "STG":
+        return (ANCHOR_EBITDA_STG, TOLERANCE_STG,
+                "HTML deck / 2026-07 deck p.9, Megan's sheet logic")
+    return (ANCHOR_EBITDA, TOLERANCE, "EPM CARDPLN Total Cost Center")
+
+
 def check_anchor(cube: tx.Cube) -> list[str]:
-    """The exact cell from the bug report, against the EPM figure."""
+    """The exact cell from the bug report, against the active source's figure."""
+    want, tol, label = _anchor_for_source()
     row = tx.ROWS[14]                      # EBITDA / North America
     got = cube.value(ANCHOR_VINTAGE, row, ANCHOR_PERIOD)
     if got is None:
         return [f"{ANCHOR_VINTAGE} {ANCHOR_PERIOD} NA EBITDA is None"]
-    if abs(got - ANCHOR_EBITDA) > TOLERANCE:
+    if abs(got - want) > tol:
         return [
             f"{ANCHOR_VINTAGE} {ANCHOR_PERIOD} North America EBITDA = "
-            f"{got / 1e6:,.10f}M, expected {ANCHOR_EBITDA / 1e6:,.10f}M "
-            f"(EPM CARDPLN), off by {(got - ANCHOR_EBITDA) / 1e6:+,.10f}M"
+            f"{got / 1e6:,.10f}M, expected {want / 1e6:,.10f}M "
+            f"({label}), off by {(got - want) / 1e6:+,.10f}M"
         ]
     return []
 
@@ -165,7 +198,7 @@ def check_flag_on_restores_addback(master: pd.DataFrame, src: dict) -> list[str]
 
 def main() -> None:
     failed = False
-    print(f"connection: {CONN_NAME}")
+    print(f"connection: {CONN_NAME}   source: {queries.SOURCE}")
     print(f"APPLY_COMPENSATION_ADJUSTMENT = "
           f"{queries.APPLY_COMPENSATION_ADJUSTMENT}\n")
 
@@ -181,9 +214,10 @@ def main() -> None:
     print(f"master frame: {len(master):,} rows\n")
 
     anchor_problems = check_anchor(cube)
+    _want, _tol, _label = _anchor_for_source()
     print(f"ANCHOR       {'FAIL' if anchor_problems else 'pass'}  "
           f"(Q1 FY26 Jul. FC North America EBITDA == "
-          f"{ANCHOR_EBITDA / 1e6:,.4f}M)")
+          f"{_want / 1e6:,.4f}M +/- {_tol / 1e6:g}M, {_label})")
     for p in anchor_problems:
         print(f"  {p}")
     failed |= bool(anchor_problems)
@@ -204,12 +238,19 @@ def main() -> None:
         print(f"  {p}")
     failed |= bool(leftover_problems)
 
-    flag_problems = check_flag_on_restores_addback(master, src)
-    print(f"FLAG ON      {'FAIL' if flag_problems else 'pass'}  "
-          f"(True restores the add-back exactly)")
-    for p in flag_problems:
-        print(f"  {p}")
-    failed |= bool(flag_problems)
+    # LEGACY-only. STG computes EBITDA from account lines and carries no
+    # ACX_Compensation cell, so there is no add-back to restore and the gate
+    # has nothing to assert -- skipping is the correct result, not a pass.
+    if queries.SOURCE == "LEGACY":
+        flag_problems = check_flag_on_restores_addback(master, src)
+        print(f"FLAG ON      {'FAIL' if flag_problems else 'pass'}  "
+              f"(True restores the add-back exactly)")
+        for p in flag_problems:
+            print(f"  {p}")
+        failed |= bool(flag_problems)
+    else:
+        print("FLAG ON      skip  (LEGACY only: STG derives EBITDA from account "
+              "lines and never passes ACX_Compensation through)")
 
     print("\nFAILED" if failed else "\nALL PASS")
     sys.exit(1 if failed else 0)

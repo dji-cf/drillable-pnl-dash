@@ -39,10 +39,12 @@ import os
 #: STG row map -- is rebound at the bottom of this module from this one value,
 #: so data.py, transforms.py and table.py carry no source-specific code. The env
 #: var lets tools and a local `streamlit run` A/B the two without an edit:
-#:     PNL_SOURCE=STG streamlit run streamlit_app.py
-#: LEGACY stays the default (and the deployed behaviour) until the STG gates in
-#: tools/validate_vs_deck.py pass and Maya says go.
-SOURCE: str = os.environ.get("PNL_SOURCE", "LEGACY").upper()
+#:     PNL_SOURCE=LEGACY streamlit run streamlit_app.py
+#: STG is the default and the deployed behaviour since 2026-10-07 (Daniel Chen's
+#: draft release): the STG gates in tools/validate_vs_deck.py pass, and the live
+#: app ships these numbers marked DRAFT while Finance validates them. LEGACY
+#: stays available as a fallback via PNL_SOURCE=LEGACY -- nothing else to edit.
+SOURCE: str = os.environ.get("PNL_SOURCE", "STG").upper()
 if SOURCE not in ("LEGACY", "STG"):
     raise ValueError(f"PNL_SOURCE must be LEGACY or STG, got {SOURCE!r}")
 
@@ -261,8 +263,10 @@ ORDER BY vintage_key, pl_line, period_type, period_date
 # STG source -- ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_BY_LOB_STG
 # ===========================================================================
 # Different grain from the legacy table: one row per LOB x ACCOUNT x COST_CENTER
-# x CHANNEL x PLAN_ELEMENT, with NO computed subtotals, NO entity (CO_) column
-# and NO intercompany (ICP_) column. Gross Margin and EBITDA are therefore built
+# x CHANNEL x PLAN_ELEMENT, with NO computed subtotals. It originally had no
+# entity or intercompany column either; Vivek added ENTITY and INTERCOMPANY on
+# 2026-10-01 and MASTER_SQL now filters on both (see STG_ENTITY / STG_ICP_*).
+# Gross Margin and EBITDA are still built
 # here from account lines, per Megan Coleman's `Collectibles FC - 9.2026.xlsx`
 # (tab `Collectibles (Monthly)`):
 #     Gross Margin = Revenue - COGS                  (file: =EN7-SUM(EN8:EN16))
@@ -443,8 +447,15 @@ ORDER BY vintage_key, pl_line, period_type, period_date
 # ---------------------------------------------------------------------------
 # (section, deck label) -> signed terms over STG_SEGMENTS. One entry per row of
 # James Dillon's Forecast Deck p.7. "file" = row(s) of Megan's
-# `Collectibles (Monthly)` tab the entry reproduces. Entity (CO_) and ICP_
-# filters in the file have no STG column; Vivek's pulls must already apply them.
+# `Collectibles (Monthly)` tab the entry reproduces. The file's Entity (CO_) and
+# intercompany (ICP_) filters DO have STG columns -- ENTITY and INTERCOMPANY were
+# added to CARDPLN_PL_BY_LOB_STG by Vivek 2026-10-01 -- and MASTER_SQL applies
+# them itself (see the base CTE: ENTITY = STG_ENTITY, plus the LB_392/ICP_32002
+# International-eliminations exception). So these terms are already entity- and
+# intercompany-scoped and do NOT depend on Vivek's pull pre-filtering them;
+# tools/validate_vs_deck.py's ONE ENTITY gate asserts exactly one of each per
+# LOB tuple. See the STG_ENTITY / STG_ICP_* block above for why CO_31000 and
+# 'Total Intercompany' are the right parents and why the child slices are not read.
 # Every Gross Margin % row uses the SAME terms as the Revenue row above it.
 _T = tuple[tuple[int, str], ...]
 

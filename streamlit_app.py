@@ -20,7 +20,7 @@ from __future__ import annotations
 import streamlit as st
 
 st.set_page_config(
-    page_title="Drillable P&L — Collectibles Forecast",
+    page_title="Drillable P&L — Collectibles Forecast (DRAFT)",
     page_icon="\U0001F4C8",
     layout="wide",
 )
@@ -43,8 +43,10 @@ style.inject()
 
 st.markdown(
     '<div class="shell-header">'
-    "<h1>Collectibles Forecast Dashboard</h1>"
+    '<h1>Collectibles Forecast Dashboard <span class="draft">(DRAFT)</span></h1>'
+    '<div class="draft-note">Numbers under validation. Not final.</div>'
     '<div class="sub">FY 2026 &nbsp;·&nbsp; Figures in $M'
+    "</div>"
     "</div>",
     unsafe_allow_html=True,
 )

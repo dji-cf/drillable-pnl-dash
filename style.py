@@ -148,6 +148,16 @@ PAGE_CSS = """
   white-space: nowrap; letter-spacing: -.2px;
 }
 .shell-header .sub { color: #7a99c0; font-size: 11px; margin-top: 3px; }
+/* DRAFT release marker (2026-10-07). Amber on the dark header, sized up from the
+   17px h1 so it reads at a glance from across a room -- Greg saw the live app
+   with LEGACY numbers and nothing told him they were provisional. */
+.shell-header h1 .draft {
+  color: #ffc53d; font-size: 21px; font-weight: 800; letter-spacing: 0;
+  margin-left: 8px; text-transform: uppercase;
+}
+.shell-header .draft-note {
+  color: #ffc53d; font-size: 12px; font-weight: 600; margin-top: 5px;
+}
 
 .tiles-row { display: flex; gap: 14px; margin: 4px 0 16px; }
 .tile {
