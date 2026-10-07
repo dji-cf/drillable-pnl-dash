@@ -337,10 +337,47 @@ counts as actual only when all of its months are.
 months were reallocated within H1. Annual and quarterly totals are unaffected;
 the figures here are the current ones.
 
-**FY26 Actuals is a 7-month partial year** (Q1–Q3, no Q4) and its FY total is a
-7-month sum. It is not a like-for-like comparison against a full-year vintage.
-This one *is* still warned about in the app, because it changes how a number
-should be read the moment it is selected.
+**Partial-year Actuals are not offered** (since 2026-10-06). FY26 Actuals
+(Jan–Aug today) is a strict subset of the newest forecast — its closed months
+*are* that forecast's actual months — and its FY total is an n-month sum that
+reads as a full year. It stays in the cube but is not in either dropdown or the
+Trends checklist; an Actuals year appears once all 12 months are in, which is
+when it becomes the prior-year comparison. What it was used for — actuals YTD
+against Budget YTD — is the **YTD column** (`YTD Aug 26A`), placed before FY at
+every grain whenever the forecast is part-way through its year. The comparison
+side is summed over the *forecast's* months (the month range lives in the period
+key, `YTD:Aug`), so Budget/PY/prior-FC YTD always cover the same months.
+
+**Vintage keys carry their year and nothing names one** (since 2026-10-06).
+Forecasts are `'Sep 2026 FC'` (was `'Sep. FC'`), Actuals and Budget stay
+`2025A` / `2026B`, and labels are derived (`2025 Actuals`, no "(PY)"). The SQL
+reads each forecast only at the fiscal year of its own as-of date — RF
+scenarios are ~18-month rolling horizons (SEP26RF carries all of FY27), so
+without that match one key would hold two years. `queries.FIRST_FISCAL_YEAR`
+(`FY25`) is the only year constant, and it is a history floor.
+
+**Retired vintages.** Once a year's actuals are final (its Actuals vintage has
+12 months), that year's forecasts and Budget are hidden by default
+(`Cube.is_retired`) and come back with the sidebar's *Show prior-year forecasts
+& budgets*. Today that is Oct/Nov/Dec 2025 FC, admitted by the year-aware filter.
+In January 2027 it will be every 2026 FC and 2026 Budget, with 2026 Actuals
+becoming the default comparison. `tools/test_vintages.py` asserts that
+transition offline.
+
+**Change cells are greyed where both sides are the same actuals.** Comparing two
+forecasts of one year, the months closed in both are byte-identical (section 3),
+so their change is zero by construction and printed `+0%` across the closed
+months. Those cells are now a muted em-dash. Only same-year, both-actual periods
+qualify: vs. Budget and vs. prior-year Actuals still show real variances in
+actual months. `tools/smoke_render.py::check_change` fails if a greyed cell ever
+hides a non-zero difference.
+
+**The change column has a `% | $` toggle**, in that column's own header (a
+`'mode'` click on the table component, so it is unavailable — rendered
+disabled — on the static fallback, like section collapse). Dollar rows show a
+percent change or the gross change in $M; margin rows are basis points in both
+modes. The table keeps its horizontal scroll across the re-render, so clicking
+it at the far right of the Monthly view does not jump back to January.
 
 **Percent metrics are plotted on a percent scale.** The deck read `def.is_pct`
 while its row definitions supplied `isPct`, so all 7 Gross Margin rows and EBITDA
@@ -418,10 +455,16 @@ explanations. All of it is in this file.
 
 Kept, because each is a live operational fact rather than a caveat:
 
-* the **partial-year warning** when FY26 Actuals is selected (section 7);
 * the **data-freshness caption** — pull time, row count, vintage list;
+* the **prior-year toggle** in the sidebar, listing what it hides;
 * the **section-collapse fallback message**, when the Streamlit runtime is below
   1.57 or the table component fails to register.
+
+The partial-year warning is gone with partial-year Actuals (section 7). Added
+2026-10-06, none of them caveats: the change header names its comparison
+(`Change vs. Aug 2026 FC`), the `% | $` toggle in that header, and **Download Excel /
+CSV** of the statement as shown (`export.py`, raw unrounded figures, all 26 rows
+whatever is collapsed).
 
 The four non-derivable rows render as an em-dash with no on-screen explanation.
 The explanation is section 4 (`HIERARCHY`, `SPLIT`, `ABSENT`).

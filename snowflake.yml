@@ -81,5 +81,6 @@ entities:
       - interactive.py
       - style.py
       - charts.py
+      - export.py
       - pyproject.toml                # container runtime reads this for deps
       - .streamlit/config.toml        # SiS honors the [theme] subset

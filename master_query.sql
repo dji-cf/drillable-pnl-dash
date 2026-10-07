@@ -65,14 +65,16 @@ WITH raw AS (
 ),
 src AS (
   SELECT
-      -- A "vintage" is a (scenario, fiscal_year) PAIR, not a scenario: the
-      -- deck's 2025A is Actual read at FY25, while 2026B and every '<Mon>. FC'
-      -- is read at FY26. Derived, not enumerated -- a future SEP26RF appears
-      -- as 'Sep. FC' with no code change.
+      -- A "vintage" is a (scenario, fiscal_year) PAIR, not a scenario: 2025A
+      -- is Actual read at FY25, 2026B the Budget at FY26, 'Sep 2026 FC' is
+      -- SEP26RF read at FY26. Every key carries its year; nothing is
+      -- enumerated, so JAN27RF appears as 'Jan 2027 FC' with no code change.
+      -- Mirrors queries._VINTAGE_KEY.
      CASE
         WHEN SCENARIO_LABEL = 'ACTUAL' THEN '20' || SUBSTR(FISCAL_YEAR, 3, 2) || 'A'
         WHEN SCENARIO_LABEL = 'BUDGET' THEN '20' || SUBSTR(FISCAL_YEAR, 3, 2) || 'B'
-        ELSE MONTHNAME(FORECAST_ASOF_DATE) || '. FC'
+        ELSE MONTHNAME(FORECAST_ASOF_DATE) || ' '
+             || TO_CHAR(YEAR(FORECAST_ASOF_DATE)) || ' FC'
       END AS vintage_key,
       SCENARIO_LABEL,
       FISCAL_YEAR,
@@ -83,7 +85,7 @@ src AS (
       PL_LINE,
       LOB_SEGMENT,
       AMOUNT,
-      -- The deck HARDCODES its 26A/26F month suffixes, so selecting Jan. FC
+      -- The deck HARDCODES its 26A/26F month suffixes, so selecting its Jan FC
       -- there still labels Jan-Jun as actuals. This computes them. Only
       -- meaningful at MONTH grain; quarters/years roll up in stage 4.
      CASE
@@ -92,14 +94,16 @@ src AS (
         ELSE PERIOD_DATE < DATE_TRUNC('MONTH', FORECAST_ASOF_DATE)
       END AS is_actual_month
   FROM raw
-  -- The >= 2026-01-01 floor excludes three vintages that would otherwise
-  -- pollute the dropdown: 'Rolling Forecast' (NULL as-of, only 8 of 12 FY26
-  -- months), DEC25RF (FY26 rows but $0 revenue), and OCT25RF / NOV25RF
-  -- (FY25-only, already excluded by FISCAL_YEAR).
-  WHERE ((SCENARIO_LABEL = 'ACTUAL'   AND FISCAL_YEAR IN ('FY25', 'FY26'))
-      OR (SCENARIO_LABEL = 'BUDGET'   AND FISCAL_YEAR = 'FY26')
-      OR (SCENARIO_LABEL = 'FORECAST' AND FISCAL_YEAR = 'FY26'
-          AND FORECAST_ASOF_DATE >= DATE '2026-01-01'))
+  -- Mirrors queries._VINTAGE_FILTER. 'FY25' is a history floor
+  -- (queries.FIRST_FISCAL_YEAR). A forecast is read ONLY at the year of its
+  -- own as-of date: every RF is an ~18-month rolling horizon, so without the
+  -- match SEP26RF's FY26 and FY27 rows would collide on one key. The same
+  -- rule drops 'Rolling Forecast' (NULL as-of) and DEC25RF's $0 FY26 rows.
+  -- Which admitted vintages the app OFFERS (no partial-year Actuals, no
+  -- forecasts/budgets of a year whose actuals are final) is transforms'.
+  WHERE ((SCENARIO_LABEL IN ('ACTUAL', 'BUDGET') AND FISCAL_YEAR >= 'FY25')
+      OR (SCENARIO_LABEL = 'FORECAST' AND FISCAL_YEAR >= 'FY25'
+          AND FISCAL_YEAR = 'FY' || TO_CHAR(FORECAST_ASOF_DATE, 'YY')))
 ),
 master AS (
   -- Exactly the rows the app receives: 724 = 11 vintages x 4 lines x 181
@@ -459,7 +463,7 @@ statement AS (
 -- EVEN), which is why transforms.round_half_up exists.
 --
 -- Change the two filters below to move around:
---   vintage_key  '2025A' | '2026B' | '2026A' | 'Jan. FC' .. 'Aug. FC'
+--   vintage_key  '2025A' | '2026B' | '2026A' | 'Oct 2025 FC' .. 'Sep 2026 FC'
 --   period_type  'YEAR' | 'QUARTER' | 'MONTH'
 SELECT
     row_idx,
@@ -490,6 +494,6 @@ SELECT
     IFF(is_pct, NULL, ROUND((value - value_precorrection) / 1e6, 1))     AS comp_effect_m,
     IFF(is_pct, ROUND((value - value_precorrection) * 10000, 0), NULL)   AS comp_effect_bps
 FROM statement
-WHERE vintage_key = 'Jul. FC'
+WHERE vintage_key = 'Jul 2026 FC'
   AND period_type = 'YEAR'
 ORDER BY row_idx
