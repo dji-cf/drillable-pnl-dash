@@ -194,9 +194,9 @@ _VINTAGE_FILTER = f"""
 # correct for every other vintage.
 #
 # Only meaningful at MONTH grain. Quarter and year labels are rolled up in
-# transforms.period_labels(), where a quarter counts as actual only when ALL of
-# its months are (which is what produces the deck's Q1 26A / Q2 26A / Q3 26F /
-# Q4 26F).
+# transforms.Cube.period_label(), where a quarter counts as actual only when ALL
+# of its months are (which is what produces the deck's Q1 26A / Q2 26A / Q3 26F /
+# Q4 26F for Jul FC), and one holding both kinds is 'A+F' (Sep FC's Q3 26A+F).
 _IS_ACTUAL_MONTH = """
       CASE
         WHEN SCENARIO_LABEL = 'ACTUAL' THEN TRUE
@@ -483,7 +483,7 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     # file 248-311 (CO_31000 Apps + CO_31032 Blockchain)
     ("Revenue", "Digital"):                _DIGITAL,
     # file 601 = NASE+INTL+DIGITAL+GCP+ELIMS+CORP OH (+HEDGE, 0.0 FY26F)
-    ("Revenue", "Total ex-Emerging Svcs"): _NA_REV + _INTL + _DIGITAL + _CORP_REV,
+    ("Revenue", "Subtotal"):               _NA_REV + _INTL + _DIGITAL + _CORP_REV,
     # file 446-465 LIVE + 490-509 PWCC
     ("Revenue", "Fanatics Collect"):       _FANCOL,
     # file 579 -- every block.
@@ -498,7 +498,7 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     ("Gross Margin", "International"):          _INTL,
     ("Gross Margin", "Total Physical Cards"):   _NA_REV + _INTL,
     ("Gross Margin", "Digital"):                _DIGITAL,
-    ("Gross Margin", "Total ex-Emerging Svcs"): _NA_REV + _INTL + _DIGITAL + _CORP_REV,
+    ("Gross Margin", "Subtotal"):               _NA_REV + _INTL + _DIGITAL + _CORP_REV,
     ("Gross Margin", "Fanatics Collect"):       _FANCOL,
     ("Gross Margin", "Total Gross Margin"):     _ALL_LOBS,
     # -- Adj. EBITDA (= AEBITDA in the file) -------------------------------
@@ -516,7 +516,7 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     # file 468-488 Corporate OH = LB_301 @ CC_30000, less file 568 (TCG,
     # CC_70123) and less file 624 "Pisa Costs" (CC_40313 / AC_61002).
     ("EBITDA", "Corporate"):              _CORP_EB,
-    ("EBITDA", "Total ex-Emerging Svcs"): _PHYS_EB + _DIGITAL + _CORP_EB,
+    ("EBITDA", "Subtotal"):               _PHYS_EB + _DIGITAL + _CORP_EB,
     # file 446-465 LIVE + 490-509 PWCC
     ("EBITDA", "Fanatics Collect"):       _FANCOL,
     # file 624 Pisa Costs + 627 NASE Key Litigations. Costs, so negated.

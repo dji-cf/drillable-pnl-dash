@@ -133,6 +133,15 @@ def _axis_title(is_pct: bool) -> str:
     return "%" if is_pct else "$M"
 
 
+#: Headroom over the chart title. The chart renders with no padding, so Vega
+#: sets the title's top at y=0 by its own estimate of the text height. Inter's
+#: capitals reach about 1px higher than that estimate, and the SVG crops the
+#: overhang. In Q1, where the top point's value label rises past the plot, a 1px
+#: layout shift was enough to clip the title's letter tops visibly. Unset sides
+#: stay 0 (Vega's default), so the plots keep their left edge.
+_PADDING = {"top": 6}
+
+
 def _titles(row: tx.Row, subtitle: str) -> alt.TitleParams:
     return alt.TitleParams(
         text=f"{row.section} — {row.metric_label}",
@@ -282,11 +291,18 @@ def outlook_chart(
     if rule is not None:
         layers.insert(0, rule)
 
+    # Crosshair, as on the month chart: the nearest vintage, its details in one
+    # tooltip, wherever the pointer is over the plot.
+    nearest = alt.selection_point(nearest=True, on="pointerover", fields=["x"],
+                                  empty=False, clear="pointerout")
     layers += [
         base.mark_line(color=ROLE_COLORS["forecast"], strokeWidth=2),
         base.mark_point(filled=True, opacity=1, color=ROLE_COLORS["forecast"]).encode(
             size=alt.condition(alt.datum.selected, alt.value(160), alt.value(64)),
-            tooltip=tooltip,
+        ),
+        base.mark_point(filled=True, color=ROLE_COLORS["forecast"]).encode(
+            size=alt.condition(alt.datum.selected, alt.value(240), alt.value(110)),
+            opacity=alt.condition(nearest, alt.value(1), alt.value(0)),
         ),
         base.transform_filter(alt.datum.labelled)
         .mark_text(dy=-15, fontSize=12, fontWeight="bold", color=_INK)
@@ -297,11 +313,21 @@ def outlook_chart(
             base.transform_filter(alt.datum.ring)
             .mark_point(filled=False, size=360, strokeWidth=2,
                         color=ROLE_COLORS[role(cube, comp, forecast, comp)])
-            .encode(tooltip=tooltip)
         )
+    # Last, so its hover area lies over every other layer.
+    layers.append(
+        alt.Chart(df)
+        .mark_rule(color="#9aaccc", strokeWidth=1)
+        .encode(
+            x=x,
+            opacity=alt.condition(nearest, alt.value(0.8), alt.value(0)),
+            tooltip=tooltip,
+        )
+        .add_params(nearest)
+    )
 
     subtitle = f"{period_label(period)} {cube.year(forecast)} · {unit}"
-    return _quiet(alt.layer(*layers).properties(height=_HEIGHT,
+    return _quiet(alt.layer(*layers).properties(height=_HEIGHT, padding=_PADDING,
                                                 title=_titles(row, subtitle)))
 
 
@@ -436,7 +462,7 @@ def months_chart(
     # No right padding for the labels: Streamlit sizes the chart with autosize
     # "fit", which already makes room for marks past the plot's edge.
     return _quiet(alt.layer(*layers).properties(
-        height=_HEIGHT, title=_titles(row, f"Monthly · {unit}"),
+        height=_HEIGHT, padding=_PADDING, title=_titles(row, f"Monthly · {unit}"),
     ))
 
 
@@ -525,5 +551,5 @@ def bridge_chart(
     subtitle = (f"{tx.vintage_label(comp)} → {tx.vintage_label(forecast)} · "
                 f"{period_label(period)} {cube.year(forecast)} · $M · "
                 f"axis does not start at $0")
-    return _quiet(alt.layer(*layers).properties(height=_HEIGHT,
+    return _quiet(alt.layer(*layers).properties(height=_HEIGHT, padding=_PADDING,
                                                 title=_titles(b.parent, subtitle)))

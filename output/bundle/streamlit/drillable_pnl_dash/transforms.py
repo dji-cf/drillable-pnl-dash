@@ -17,13 +17,15 @@ and four rows (10 and 18 Digital, 19 Corporate, 23 TCG) cannot be derived from
 the source at all and render as em-dashes. Every cost row shows its live figure.
 
 ISSUES.md is the full account -- including the ACX_Compensation double-count that
-_apply_compensation() below corrects, the actual-month residual it does not, and
-why row 22 stays flagged despite tying for Jul. FC.
+_apply_compensation() below can correct (disabled by default since 2026-09-29, so
+gross_margin and ebitda are the source's own ACX_ values as EPM reports them),
+and why row 22 stays flagged despite tying for Jul. FC.
 """
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from typing import Callable, Mapping, Sequence
 
 import pandas as pd
@@ -46,6 +48,36 @@ QUARTER_MONTHS: dict[str, tuple[str, ...]] = {
 }
 ANNUAL = "annual"
 
+#: Year-to-date period keys are 'YTD:<last month>', e.g. 'YTD:Aug' = Jan..Aug.
+#: The month range lives IN the key so a comparison vintage read with the
+#: forecast's period keys is summed over exactly the forecast's months.
+YTD_PREFIX = "YTD:"
+
+
+def ytd_key(last_month: str) -> str:
+    return f"{YTD_PREFIX}{last_month}"
+
+
+def ytd_months(period_key: str) -> tuple[str, ...]:
+    """'YTD:Aug' -> ('Jan', ..., 'Aug')."""
+    last = period_key[len(YTD_PREFIX):]
+    return MONTHS[: MONTHS.index(last) + 1]
+
+
+def is_ytd(period_key: str) -> bool:
+    return period_key.startswith(YTD_PREFIX)
+
+
+#: Suffix of a quarter or YTD column holding both actual and forecast months
+#: ('Q3 26A+F'). See Cube.period_label; the FY column never takes it.
+MIXED_SUFFIX = "A+F"
+
+
+def _span(months: Sequence[str]) -> str:
+    """('Jul', 'Aug') -> 'Jul-Aug'; ('Sep',) -> 'Sep'. Months are contiguous."""
+    return months[0] if len(months) == 1 else f"{months[0]}{EN_DASH}{months[-1]}"
+
+
 GRAINS: tuple[str, ...] = ("annual", "quarterly", "monthly")
 
 SECTIONS: tuple[str, ...] = ("Revenue", "Gross Margin", "EBITDA", "EBITDA Margin")
@@ -54,14 +86,23 @@ SECTIONS: tuple[str, ...] = ("Revenue", "Gross Margin", "EBITDA", "EBITDA Margin
 SECTIONS_WITH_HEADER: tuple[str, ...] = ("Revenue", "Gross Margin", "EBITDA")
 
 # ---------------------------------------------------------------------------
-# Deck colors, ported verbatim
+# Deck colors
 # ---------------------------------------------------------------------------
-PERIOD_COLORS: dict[str, str] = {
-    "2025A": "#7a9ab8", "2026B": "#a0b4c8", "2026A": "#c0864a",
-    "Jan. FC": "#93c5fd", "Feb. FC": "#60a5fa", "Mar. FC": "#3b82f6",
-    "Apr. FC": "#1d4ed8", "May. FC": "#1e3a8a", "Jun. FC": "#172554",
-    "Jul. FC": "#0b1220", "Aug. FC": "#4c1d95",
-}
+# The deck keyed PERIOD_COLORS on literal vintage names ('2025A', 'Jul. FC').
+# The same colors are now assigned by KIND and as-of month -- see
+# vintage_color() -- so a new year's vintages are colored with no edit.
+# Actuals and Budgets alternate shade by year parity, so two adjacent years
+# plotted together stay distinguishable.
+_ACTUAL_COLORS: tuple[str, str] = ("#7a9ab8", "#56708c")
+_BUDGET_COLORS: tuple[str, str] = ("#a0b4c8", "#c3cfdc")
+#: Forecast colors by as-of month. Jan-Aug are the deck's own; Sep-Dec extend
+#: its ramp into the violet Aug started.
+_FC_MONTH_COLORS: tuple[str, ...] = (
+    "#93c5fd", "#60a5fa", "#3b82f6", "#1d4ed8", "#1e3a8a", "#172554",
+    "#0b1220", "#4c1d95", "#6d28d9", "#7c3aed", "#8b5cf6", "#a78bfa",
+)
+FALLBACK_COLOR = "#4d7ab8"
+
 MONTH_SUB_COLORS: dict[str, str] = {
     "Jan": "#3b82f6", "Feb": "#0ea5e9", "Mar": "#06b6d4",
     "Apr": "#f59e0b", "May": "#f97316", "Jun": "#ef4444",
@@ -76,6 +117,7 @@ QTR_SUB_COLORS: dict[str, str] = {
 # Formatters -- ported from the deck's JS (source lines 263-286)
 # ---------------------------------------------------------------------------
 EM_DASH = "\u2014"
+EN_DASH = "\u2013"
 
 
 def round_half_up(x: float) -> int:
@@ -119,34 +161,81 @@ def fmt_tile(v: float | None) -> str:
     return f"${float(v) / 1e9:.2f}B"
 
 
-def delta_fmt(
-    curr: float | None, comp: float | None, is_pct: bool, has_comp: bool = True
-) -> dict[str, str] | None:
-    """Period-over-period delta cell: {'text', 'cls'}, or None when no comparison.
+#: How the change column reads on dollar rows: a percent change ("pct", the
+#: deck's only mode) or the gross difference in $M ("usd"). Percent rows are
+#: basis points in BOTH modes -- a "% change of a margin" is not a quantity
+#: anyone quotes, and a margin has no dollar difference.
+DELTA_MODES: tuple[str, ...] = ("pct", "usd")
+#: The toggle's button text, in DELTA_MODES order.
+DELTA_MODE_LABELS: dict[str, str] = {"pct": "%", "usd": "$"}
 
-    Percent rows go to basis points, dollar rows to a percent change. The
-    thresholds (0.5 bps, 0.1%) are the deck's, not a rounding artifact -- a
-    delta inside them renders neutral rather than green/red.
+
+def delta_value(
+    curr: float | None, comp: float | None, is_pct: bool, mode: str = "pct"
+) -> float | None:
+    """The raw change behind a delta cell, in the unit the cell shows.
+
+    Percent rows: basis points. Dollar rows: the fractional change (0.42 for
+    +42%) in "pct" mode, the dollar difference in "usd" mode. None when either
+    side is missing, or for a percent change against zero.
+    """
+    if _is_missing(comp) or _is_missing(curr):
+        return None
+    curr_f, comp_f = float(curr), float(comp)  # type: ignore[arg-type]
+    if is_pct:
+        return (curr_f - comp_f) * 10_000
+    if mode == "usd":
+        return curr_f - comp_f
+    if comp_f == 0:
+        return None
+    return (curr_f - comp_f) / abs(comp_f)
+
+
+def delta_fmt(
+    curr: float | None,
+    comp: float | None,
+    is_pct: bool,
+    has_comp: bool = True,
+    mode: str = "pct",
+    usd_suffix: str = "",
+) -> dict[str, str] | None:
+    """Change cell: {'text', 'cls'}, or None when no comparison.
+
+    Percent rows go to basis points; dollar rows to a percent change ("pct")
+    or to the difference in $M ("usd", formatted like fmt_m: '+$12', '($5)').
+    ``usd_suffix`` goes inside the figure ('+$120M', '($5M)') for the tiles.
+    The pct-mode thresholds (0.5 bps, 0.1%) are the deck's, not a rounding
+    artifact -- a delta inside them renders neutral rather than green/red. A
+    usd delta is neutral when it rounds to $0M.
 
     Deviation from the deck, deliberate: when ``curr`` is missing this returns
     an em-dash. The deck's JS would coerce a null ``curr`` to 0 and print a
     confident -100%, which is wrong -- it happens whenever the comparison
-    vintage covers a period the forecast does not (or vice versa), which is
-    routine now that FY26 Actuals is only 7 months.
+    vintage covers a period the forecast does not (or vice versa).
     """
     if not has_comp or _is_missing(comp) or _is_missing(curr):
         return None
-    curr_f, comp_f = float(curr), float(comp)  # type: ignore[arg-type]
+    d = delta_value(curr, comp, is_pct, mode)
 
     if is_pct:
-        d = (curr_f - comp_f) * 10_000
+        assert d is not None
         sign = "+" if d >= 0 else ""
         cls = "gpos" if d > 0.5 else "gneg" if d < -0.5 else "gflat"
         return {"text": f"{sign}{round_half_up(d)} bps", "cls": cls}
 
-    if comp_f == 0:
+    if mode == "usd":
+        assert d is not None
+        m = d / 1e6
+        r = round_half_up(abs(m))
+        if r == 0:
+            return {"text": f"$0{usd_suffix}", "cls": "gflat"}
+        if m > 0:
+            return {"text": f"+${r:,}{usd_suffix}", "cls": "gpos"}
+        return {"text": f"(${r:,}{usd_suffix})", "cls": "gneg"}
+
+    if d is None:                   # a percent change against zero
         return {"text": EM_DASH, "cls": "gflat"}
-    d = (curr_f - comp_f) / abs(comp_f) * 100
+    d *= 100
     sign = "+" if d >= 0 else ""
     cls = "gpos" if d > 0.1 else "gneg" if d < -0.1 else "gflat"
     return {"text": f"{sign}{round_half_up(d)}%", "cls": cls}
@@ -328,7 +417,7 @@ ROWS: tuple[Row, ...] = (
     _rev(1, "International",          "sub",      _intl),
     _rev(2, "Total Physical Cards",   "subtotal", _phys),
     _rev(3, "Digital",                "sub",      _digital_residual),
-    _rev(4, "Total ex-Emerging Svcs", "subtotal", _exem),
+    _rev(4, "Subtotal",               "subtotal", _exem),
     _rev(5, "Fanatics Collect",       "sub",      _fanlive),
     _rev(6, "Total Revenue",          "total",    _grand_total),
     # -- Gross Margin % (unreconciled) ------------------------------------
@@ -339,7 +428,7 @@ ROWS: tuple[Row, ...] = (
     _gm(8,  "International",          "International %",          "sub",      _intl),
     _gm(9,  "Total Physical Cards",   "Total Physical Cards %",   "subtotal", _phys),
     _gm(10, "Digital",                "Digital %",                "sub",      _digital_residual),
-    _gm(11, "Total ex-Emerging Svcs", "Total ex-Emerging Svcs %", "subtotal", _exem),
+    _gm(11, "Subtotal",               "Subtotal %",               "subtotal", _exem),
     _gm(12, "Fanatics Collect",       "Fanatics Collect %",       "sub",      _fanlive),
     _gm(13, "Total Gross Margin",     "Total Gross Margin %",     "total",    _grand_total),
     # -- EBITDA (unreconciled) --------------------------------------------
@@ -351,7 +440,7 @@ ROWS: tuple[Row, ...] = (
     # Corporate and TCG have NO expression: the view carries no segment for
     # either, so there is nothing to show and they render as an em-dash.
     _eb(19, "Corporate",              "sub",      None),
-    _eb(20, "Total ex-Emerging Svcs", "subtotal", _exem),
+    _eb(20, "Subtotal",               "subtotal", _exem),
     _eb(21, "Fanatics Collect",       "sub",      _fanlive),
     _eb(22, "Key Litigation Costs",   "sub",      _keylit),
     _eb(23, "TCG",                    "sub",      None),
@@ -364,72 +453,164 @@ ROWS: tuple[Row, ...] = (
 assert len(ROWS) == 26, "the deck has 26 rows"
 assert all(r.idx == i for i, r in enumerate(ROWS)), "ROWS must be in index order"
 
+#: Hover text on the statement's row labels, keyed (section, label).
+ROW_TOOLTIPS: dict[tuple[str, str], str] = {
+    **{(sec, "North America"): (
+        "North America Gross Margins exclude eliminations; "
+        "Total Gross Margin includes eliminations.")
+       for sec in ("Revenue", "Gross Margin", "EBITDA")},
+    **{(sec, "Fanatics Collect"): "Fanatics Live (LB_306) + Marketplace / PWCC (LB_307)"
+       for sec in ("Revenue", "Gross Margin", "EBITDA")},
+    # The deck's "Total ex-Emerging Svcs", renamed on screen (James, CI-66);
+    # the hover keeps the old name findable.
+    **{(sec, "Subtotal"): "Total ex-Emerging Services: Physical Cards + Digital + Corporate"
+       for sec in ("Revenue", "Gross Margin", "EBITDA")},
+}
+
+# ---------------------------------------------------------------------------
+# STG source
+# ---------------------------------------------------------------------------
+# Same 26 rows, same labels, same order -- only the expressions change, and they
+# come from queries.STG_ROW_MAP, so no LOB grouping lives in this file. Every
+# row is derivable and none is a structural gap any more: Digital, Corporate and
+# TCG have real LOBs in STG. So the legacy gap registry, which describes the
+# legacy table's limits, does not apply and is cleared.
+if queries.SOURCE == "STG":
+    def _terms_expr(terms: tuple[tuple[int, str], ...]) -> Callable[[Segs], float]:
+        return lambda s: sum(sign * s[key] for sign, key in terms)
+
+    _missing = [(r.section, r.label) for r in ROWS
+                if (r.section, r.label) not in queries.STG_ROW_MAP]
+    assert not _missing, f"STG_ROW_MAP has no entry for {_missing}"
+
+    ROWS = tuple(
+        replace(r, expr=_terms_expr(queries.STG_ROW_MAP[(r.section, r.label)]))
+        for r in ROWS
+    )
+    GAPS = {}
+    UNRECONCILED_ROWS = frozenset()
+
 # ---------------------------------------------------------------------------
 # Vintages
 # ---------------------------------------------------------------------------
-VINTAGE_LABELS: dict[str, str] = {
-    "2025A": "2025 Actuals (PY)",
-    "2026B": "2026 Budget",
-    "2026A": "FY26 Actuals (partial)",
-}
+# Keys come from queries._VINTAGE_KEY and always carry their year:
+#   '2025A'        Actuals, FY25
+#   '2026B'        Budget, FY26
+#   'Sep 2026 FC'  the forecast as of Sep 2026 (read at FY26)
+# Labels, ordering and colors are all derived from the key and which vintages
+# are OFFERED from the data (Cube.visible), so nothing below names a year.
+ACTUAL, BUDGET, FORECAST = "A", "B", "F"
 
-#: The FY26 Actuals vintage. Seven months only (Jan-Jul), three quarters with
-#: Q3 = Jul alone, no Q4, and a YearTotal that is a 7-month sum. Never a
-#: like-for-like full-year comparison; the UI warns whenever it is selected.
-PARTIAL_VINTAGE = "2026A"
+_BASE_KEY = re.compile(r"^(\d{4})([AB])$")
+_FC_KEY = re.compile(r"^([A-Z][a-z]{2}) (\d{4}) FC$")
+_KIND_RANK = {ACTUAL: 0, BUDGET: 1, FORECAST: 2}
+
+
+def vintage_parts(key: str) -> tuple[str, int, int] | None:
+    """(kind, year, as-of month 1-12 -- 0 for Actuals/Budget), or None.
+
+    The one parser of the keys queries._VINTAGE_KEY emits. None for anything
+    else, so a dev tool carrying its own key format (tools/gap_analysis.py)
+    degrades to input order rather than raising.
+    """
+    m = _BASE_KEY.match(key)
+    if m:
+        return m.group(2), int(m.group(1)), 0
+    m = _FC_KEY.match(key)
+    if m and m.group(1) in MONTHS:
+        return FORECAST, int(m.group(2)), MONTHS.index(m.group(1)) + 1
+    return None
 
 
 def vintage_label(key: str) -> str:
-    return VINTAGE_LABELS.get(key, key)
+    """'2025A' -> '2025 Actuals', '2026B' -> '2026 Budget'.
+
+    A forecast key ('Sep 2026 FC') is already its own label. No "(PY)" or
+    "(partial)" qualifiers: both are relative to today and go stale on their
+    own -- prior-year-ness is the comparison the user picked, and partial
+    actuals are not offered at all (see Cube.visible).
+    """
+    parts = vintage_parts(key)
+    if parts is None:
+        return key
+    kind, year, _ = parts
+    if kind == ACTUAL:
+        return f"{year} Actuals"
+    if kind == BUDGET:
+        return f"{year} Budget"
+    return key
 
 
-def _fc_month_index(key: str) -> int:
-    """Calendar position of a '<Mon>. FC' vintage, or -1."""
-    if not key.endswith(". FC"):
-        return -1
-    mon = key[:-4]
-    return MONTHS.index(mon) if mon in MONTHS else -1
+def change_label(comp: str) -> str:
+    """Header for the change block, e.g. 'Change vs. Aug 2026 FC'."""
+    return f"Change vs. {vintage_label(comp)}"
+
+
+def vintage_color(key: str) -> str:
+    """Chart / swatch color: by kind, and by as-of month for forecasts."""
+    parts = vintage_parts(key)
+    if parts is None:
+        return FALLBACK_COLOR
+    kind, year, month = parts
+    if kind == ACTUAL:
+        return _ACTUAL_COLORS[year % 2]
+    if kind == BUDGET:
+        return _BUDGET_COLORS[year % 2]
+    return _FC_MONTH_COLORS[month - 1]
+
+
+def _sort_key(key: str) -> tuple[int, int, int]:
+    parts = vintage_parts(key)
+    if parts is None:
+        return (len(_KIND_RANK), 0, 0)
+    kind, year, month = parts
+    return (_KIND_RANK[kind], year, month)
 
 
 def order_vintages(keys: Sequence[str]) -> list[str]:
-    """Baselines first, then forecast vintages oldest to newest.
+    """Actuals, then Budgets, then forecasts -- each oldest to newest.
 
-    Mirrors the deck's ALL_PERIODS_ORDERED (2025A, 2026B, then Jan..Jul FC) and
-    slots the two vintages the deck lacks: FY26 Actuals next to the other
-    baselines, Aug. FC at the end of the forecast run.
+    The deck's ALL_PERIODS_ORDERED (2025A, 2026B, then Jan..Jul FC), carried
+    across years: Dec 2026 FC sorts before Jan 2027 FC. Stable, so unparseable
+    keys keep their input order at the end.
     """
-    base_order = {"2025A": 0, "2026B": 1, PARTIAL_VINTAGE: 2}
-    return sorted(
-        keys,
-        key=lambda k: (0, base_order[k]) if k in base_order else (1, _fc_month_index(k)),
-    )
+    return sorted(keys, key=_sort_key)
 
 
-def forecast_options(keys: Sequence[str]) -> list[str]:
-    """Forecast dropdown: newest forecast first, FY26 Actuals last.
+def _newest_first(keys: Sequence[str]) -> list[str]:
+    return sorted(keys, key=_sort_key, reverse=True)
+
+
+def forecast_options(cube: "Cube", include_retired: bool = False) -> list[str]:
+    """Forecast dropdown: the offered forecasts, newest first.
 
     Newest-first because the working answer to "what is the current outlook" is
-    the latest vintage; the deck defaulted to Jul. FC for the same reason and
-    this account now carries Aug. FC.
+    the latest vintage; the deck defaulted to its newest (Jul. FC) for the same
+    reason. If no forecast is offered -- early in a year, after the prior year's
+    are retired and before the first new one lands -- fall back to the open
+    year's Budget, then to every vintage, so the page always has something.
     """
-    fcs = [k for k in keys if k.endswith(". FC")]
-    fcs.sort(key=_fc_month_index, reverse=True)
-    tail = [k for k in (PARTIAL_VINTAGE,) if k in keys]
-    return fcs + tail
+    visible = cube.visible(include_retired)
+    for label in ("FORECAST", "BUDGET"):
+        keys = [k for k in visible if cube.scenario_label.get(k) == label]
+        if keys:
+            return _newest_first(keys)
+    return _newest_first(visible or cube.vintages)
 
 
-def comp_options(keys: Sequence[str], forecast: str) -> list[str]:
+def comp_options(cube: "Cube", forecast: str, include_retired: bool = False) -> list[str]:
     """Comparison dropdown, porting the deck's refreshCompOpts().
 
-    '' is the "None" entry. Order: baselines, then every forecast vintage
-    EXCEPT the selected one -- comparing a vintage to itself is the deck's one
-    excluded case, and resolve_comp() below reproduces its reset-on-collision.
+    '' is the "None" entry. Then Budgets, complete Actuals, and forecasts, each
+    newest first, EXCEPT the selected forecast -- comparing a vintage to itself
+    is the deck's one excluded case, and resolve_comp() below reproduces its
+    reset-on-collision.
     """
+    visible = [k for k in cube.visible(include_retired) if k != forecast]
     out: list[str] = [""]
-    out += [k for k in ("2026B", "2025A", PARTIAL_VINTAGE) if k in keys and k != forecast]
-    fcs = [k for k in keys if k.endswith(". FC") and k != forecast]
-    fcs.sort(key=_fc_month_index, reverse=True)
-    return out + fcs
+    for label in ("BUDGET", "ACTUAL", "FORECAST"):
+        out += _newest_first([k for k in visible if cube.scenario_label.get(k) == label])
+    return out
 
 
 def resolve_comp(comp: str, forecast: str, options: Sequence[str]) -> str:
@@ -459,11 +640,30 @@ class Cube:
     vintages: tuple[str, ...]
 
     # -- values ----------------------------------------------------------
+    def _segs(self, vintage: str, line: str, period_key: str) -> dict[str, float] | None:
+        """The segment dict for one cell; a YTD key sums its months.
+
+        Summed BEFORE the row expression is applied, so a percent row's YTD is
+        the ratio of the summed numerator and denominator, not a mean of
+        monthly ratios. Any missing month makes the whole YTD missing rather
+        than quietly short.
+        """
+        if not is_ytd(period_key):
+            return self.segs.get((vintage, line, period_key))
+        total: dict[str, float] = {}
+        for month in ytd_months(period_key):
+            month_segs = self.segs.get((vintage, line, month))
+            if month_segs is None:
+                return None
+            for k, v in month_segs.items():
+                total[k] = total.get(k, 0.0) + v
+        return total
+
     def value(self, vintage: str, row: Row, period_key: str) -> float | None:
         """The figure for one cell, or None when it cannot be derived."""
         if row.expr is None or row.num_line is None:
             return None
-        num_segs = self.segs.get((vintage, row.num_line, period_key))
+        num_segs = self._segs(vintage, row.num_line, period_key)
         if num_segs is None:
             return None
         num = row.expr(num_segs)
@@ -471,64 +671,210 @@ class Cube:
             return num
         if row.den_line is None:
             return None
-        den_segs = self.segs.get((vintage, row.den_line, period_key))
+        den_segs = self._segs(vintage, row.den_line, period_key)
         if den_segs is None:
             return None
         den = row.expr(den_segs)
         return None if not den else num / den
 
+    # -- which vintages the page offers ----------------------------------
+    def is_complete(self, vintage: str) -> bool:
+        """All 12 months present. False only for an in-progress Actuals year."""
+        return len(self.months_present.get(vintage, ())) == len(MONTHS)
+
+    @property
+    def final_years(self) -> frozenset[str]:
+        """Fiscal years whose actuals are final: the ACTUAL vintage has 12 months."""
+        return frozenset(
+            self.fiscal_year[v] for v in self.vintages
+            if self.scenario_label.get(v) == "ACTUAL" and self.is_complete(v)
+        )
+
+    def is_retired(self, vintage: str) -> bool:
+        """A Budget or forecast for a year whose actuals are final.
+
+        Once a year has closed, its forecasts and budget are history: the
+        Actuals are the answer. They stay in the cube and come back with the
+        sidebar's "show prior-year" toggle, but are not offered by default.
+        """
+        return (self.scenario_label.get(vintage) in ("BUDGET", "FORECAST")
+                and self.fiscal_year.get(vintage) in self.final_years)
+
+    def visible(self, include_retired: bool = False) -> tuple[str, ...]:
+        """The vintages the dropdowns and the Trends checklist offer.
+
+        Never a partial-year Actuals vintage: it is a strict subset of the
+        newest forecast (its closed months are that forecast's actual months),
+        and its FY total is an n-month sum that reads as a full year. The YTD
+        column carries what it was used for. An Actuals year appears once all
+        12 months are in, which is when it becomes the prior-year comparison.
+        """
+        return tuple(
+            v for v in self.vintages
+            if (self.scenario_label.get(v) != "ACTUAL" or self.is_complete(v))
+            and (include_retired or not self.is_retired(v))
+        )
+
+    # -- actual vs forecast ----------------------------------------------
+    def months_of(self, vintage: str, period_key: str) -> tuple[str, ...]:
+        """The calendar months a period key covers for one vintage."""
+        if period_key == ANNUAL:
+            return self.months_present.get(vintage, ())
+        if period_key in QUARTER_MONTHS:
+            return QUARTER_MONTHS[period_key]
+        if is_ytd(period_key):
+            return ytd_months(period_key)
+        return (period_key,)
+
+    def is_actual(self, vintage: str, period_key: str) -> bool:
+        return self._suffix(vintage, self.months_of(vintage, period_key)) == "A"
+
+    def same_actuals(self, a: str, b: str, period_key: str) -> bool:
+        """Both vintages report this period as the same year's actuals.
+
+        Then the change between them is zero by construction -- an RF
+        snapshot's closed months are the Actual scenario's, byte for byte
+        (ISSUES.md section 3) -- so the change cell is greyed rather than
+        printing '+0%'. Different years (vs. prior-year Actuals) or a Budget
+        side (never actual) are real variances and are not greyed.
+        """
+        return (self.fiscal_year.get(a) == self.fiscal_year.get(b)
+                and self.is_actual(a, period_key)
+                and self.is_actual(b, period_key))
+
     # -- period labelling ------------------------------------------------
     def _yy(self, vintage: str) -> str:
-        return self.fiscal_year.get(vintage, "FY26")[2:]
+        return self.fiscal_year[vintage][2:]
 
     def _yyyy(self, vintage: str) -> str:
         return "20" + self._yy(vintage)
 
-    def _suffix(self, vintage: str, months: Sequence[str]) -> str:
-        """'A' actual, 'B' budget, 'F' forecast.
+    def year(self, vintage: str) -> str:
+        """'2026' -- the fiscal year a vintage is read at."""
+        return self._yyyy(vintage)
+
+    def _split(self, vintage: str, months: Sequence[str]) -> tuple[list[str], list[str]]:
+        """(actual months, forecast months) of a forecast vintage, among ``months``.
+
+        Both empty for Actuals and Budget, whose months are all one kind.
+        """
+        if self.scenario_label.get(vintage, "FORECAST") in ("ACTUAL", "BUDGET"):
+            return [], []
+        have = [m for m in months if (vintage, m) in self.month_actual]
+        return ([m for m in have if self.month_actual[(vintage, m)]],
+                [m for m in have if not self.month_actual[(vintage, m)]])
+
+    def _suffix(self, vintage: str, months: Sequence[str], mixed: bool = False) -> str:
+        """'A' actual, 'B' budget, 'F' forecast -- or MIXED_SUFFIX when asked.
 
         A quarter or a year is only 'A' when every month it contains is an
         actual -- which is what reproduces the deck's Q1 26A / Q2 26A / Q3 26F /
         Q4 26F for Jul. FC, and correctly labels older vintages that the deck's
-        hardcoded constants got wrong.
+        hardcoded constants got wrong. With ``mixed``, a period holding both
+        actual and forecast months is 'A+F' rather than 'F' (Sep FC's Q3 is
+        Jul-Aug actual, Sep forecast). The FY column never asks: a year with
+        any forecast month in it stays 'F', as in the deck.
         """
         label = self.scenario_label.get(vintage, "FORECAST")
         if label == "ACTUAL":
             return "A"
         if label == "BUDGET":
             return "B"
-        flags = [self.month_actual[(vintage, m)] for m in months
-                 if (vintage, m) in self.month_actual]
-        return "A" if flags and all(flags) else "F"
+        actual, forecast = self._split(vintage, months)
+        if actual and not forecast:
+            return "A"
+        return MIXED_SUFFIX if mixed and actual else "F"
+
+    def _held_part(self, vintage: str, period_key: str) -> list[str] | None:
+        """The months of a quarter the vintage holds, when it holds only some.
+
+        2026 Actuals in October: Q3 is Jul-Aug. None for a whole quarter, an
+        absent one, or any other period key.
+        """
+        if period_key not in QUARTER_MONTHS:
+            return None
+        present = self.months_present.get(vintage, ())
+        have = [m for m in QUARTER_MONTHS[period_key] if m in present]
+        return have if have and len(have) < len(QUARTER_MONTHS[period_key]) else None
+
+    def period_label(self, vintage: str, period_key: str) -> str:
+        """The column header for one vintage at one period key.
+
+        'Aug 26F', 'Q3 26A+F', 'YTD Aug 26A', 'FY 2026F'. The one formatter, so
+        a comparison block labelled at the forecast's period keys reads as ITS
+        OWN periods (2025 Actuals: 'Q3 25A', not the forecast's 'Q3 26A+F'). A
+        quarter the vintage holds only part of carries its months:
+        'Q3 26A (Jul-Aug)'.
+        """
+        months = self.months_of(vintage, period_key)
+        if period_key == ANNUAL:
+            return f"FY {self._yyyy(vintage)}{self._suffix(vintage, months)}"
+        head = f"YTD {months[-1]}" if is_ytd(period_key) else period_key
+        label = f"{head} {self._yy(vintage)}{self._suffix(vintage, months, mixed=True)}"
+        part = self._held_part(vintage, period_key)
+        return f"{label} ({_span(part)})" if part else label
+
+    def period_note(self, vintage: str, period_key: str) -> str | None:
+        """Hover text for a header whose label cannot say it all, else None.
+
+        'Jul-Aug actual, Sep forecast' for a period that mixes the two --
+        including FY, whose label stays 'F' -- and 'Jul-Aug only' for a
+        quarter the vintage holds only part of.
+        """
+        part = self._held_part(vintage, period_key)
+        if part:
+            return f"{_span(part)} only"
+        actual, forecast = self._split(vintage, self.months_of(vintage, period_key))
+        if actual and forecast:
+            return f"{_span(actual)} actual, {_span(forecast)} forecast"
+        return None
+
+    def ytd_period(self, vintage: str) -> tuple[str, str] | None:
+        """('YTD:Aug', 'YTD Aug 26A') for a vintage part-way through its year.
+
+        Jan through the last closed month. None when nothing is closed yet
+        (Jan FC), when everything is (a full Actuals year -- YTD would be FY), or
+        for a Budget, which has no actual months. Also None if the closed months
+        are not a Jan-anchored run, which _IS_ACTUAL_MONTH cannot produce but a
+        YTD label would then misdescribe.
+        """
+        closed = [m for m in self.months_present.get(vintage, ())
+                  if self.month_actual.get((vintage, m))]
+        if not closed or len(closed) == len(MONTHS):
+            return None
+        if tuple(closed) != MONTHS[: len(closed)]:
+            return None
+        key = ytd_key(closed[-1])
+        return key, self.period_label(vintage, key)
 
     def periods(self, vintage: str, grain: str) -> list[tuple[str, str]]:
         """(period_key, label) pairs for one vintage at one grain.
 
         The annual column is appended to the quarterly and monthly grains, as
-        in the deck. Only periods the vintage actually has are listed, so FY26
-        Actuals yields 7 months / 3 quarters rather than fabricating a Q4.
+        in the deck, and a YTD column (see ytd_period) sits just before it at
+        every grain. Only periods the vintage actually has are listed, so a
+        partial Actuals year yields its closed months rather than fabricating
+        a Q4.
         """
-        yy, yyyy = self._yy(vintage), self._yyyy(vintage)
-        months = self.months_present.get(vintage, ())
-        annual = (ANNUAL, f"FY {yyyy}{self._suffix(vintage, months)}")
+        tail = [(ANNUAL, self.period_label(vintage, ANNUAL))]
+        ytd = self.ytd_period(vintage)
+        if ytd is not None:
+            tail.insert(0, ytd)
 
         if grain == "annual":
-            return [annual]
+            return tail
         if grain == "quarterly":
-            qs = [
-                (q, f"{q} {yy}{self._suffix(vintage, QUARTER_MONTHS[q])}")
-                for q in self.quarters_present.get(vintage, ())
-            ]
-            return qs + [annual]
-        ms = [(m, f"{m} {yy}{self._suffix(vintage, (m,))}") for m in months]
-        return ms + [annual]
-
-    def is_partial(self, vintage: str) -> bool:
-        return len(self.months_present.get(vintage, ())) < 12
+            qs = [(q, self.period_label(vintage, q))
+                  for q in self.quarters_present.get(vintage, ())]
+            return qs + tail
+        ms = [(m, self.period_label(vintage, m))
+              for m in self.months_present.get(vintage, ())]
+        return ms + tail
 
 
 #: Internal cube key for queries.COMPENSATION_LINE. Never referenced by a Row --
-#: build_cube folds it into gross_margin and ebitda, then discards it.
+#: build_cube discards it, after folding it into gross_margin and ebitda only
+#: when queries.APPLY_COMPENSATION_ADJUSTMENT is True (it is False by default).
 _COMP = "_compensation"
 
 
@@ -584,8 +930,27 @@ def build_cube(df: pd.DataFrame) -> Cube:
 
 
 def _apply_compensation(segs: dict[tuple[str, str, str], dict[str, float]]) -> None:
-    """Undo the source's Compensation double-count, in place.
+    """Optionally undo the source's Compensation double-count, in place.
 
+    GATED BY queries.APPLY_COMPENSATION_ADJUSTMENT, default False (2026-09-29).
+
+    When the flag is False -- the default -- this only DISCARDS the _COMP keys
+    and returns, adding nothing. gross_margin and ebitda are then the source's
+    own ACX_Gross Margin and ACX_EBITDA, which is what EPM (cube CARDPLN)
+    reports and what the business treats as authoritative: Q1 FY26 North America
+    EBITDA is $195.32M, not the $244.22M the add-back produced. Finance handles
+    the Compensation double-count outside this app, so applying it here
+    double-corrects it.
+
+    The keys are removed rather than left in place because build_cube's contract
+    is that every key in the returned cube is a reported line; a leftover
+    _compensation entry would be a trap for the next reader (and for anything
+    that iterates the cube).
+
+    When the flag is True, the original behaviour runs unchanged, as described
+    below.
+
+    ------------------------------------------------------------------
     ACX_Cost of Goods Sold is not the sum of its seven mapped children -- it is
     those children PLUS ACX_Compensation. And Compensation is ALSO inside
     ACX_Other SG&A. Since the source computes
@@ -607,9 +972,17 @@ def _apply_compensation(segs: dict[tuple[str, str, str], dict[str, float]]) -> N
     this happened.
 
     Gated by tools/validate_vs_deck.py::check_compensation, which fails if the
-    source ever stops satisfying ``cogs == children + compensation``.
+    source ever stops satisfying ``cogs == children + compensation`` -- and which
+    is itself skipped while this flag is False.
     """
-    for key in [k for k in segs if k[1] == _COMP]:
+    comp_keys = [k for k in segs if k[1] == _COMP]
+
+    if not queries.APPLY_COMPENSATION_ADJUSTMENT:
+        for key in comp_keys:
+            del segs[key]
+        return
+
+    for key in comp_keys:
         vintage, _, pkey = key
         comp = segs.pop(key)
         for target in ("gross_margin", "ebitda"):
@@ -621,6 +994,142 @@ def _apply_compensation(segs: dict[tuple[str, str, str], dict[str, float]]) -> N
 
 
 # ---------------------------------------------------------------------------
+# Trends
+# ---------------------------------------------------------------------------
+# What the Historical Trends charts read, kept here rather than in charts.py so
+# the vintage rules and the bridge arithmetic can be asserted offline
+# (tools/test_vintages.py).
+
+#: The periods the outlook and bridge charts read: the FY total or one quarter.
+#: The month chart always spans Jan-Dec.
+TREND_PERIODS: tuple[str, ...] = (ANNUAL,) + QUARTERS
+
+
+def year_budget(cube: Cube, vintage: str) -> str | None:
+    """The Budget of a vintage's fiscal year ('2026B'), when the cube has it."""
+    key = f"{cube.year(vintage)}B"
+    return key if cube.scenario_label.get(key) == "BUDGET" else None
+
+
+def prior_year_actuals(cube: Cube, vintage: str) -> str | None:
+    """The year before's Actuals ('2025A' for FY26), once all 12 months are in."""
+    key = f"{int(cube.year(vintage)) - 1}A"
+    if cube.scenario_label.get(key) != "ACTUAL" or not cube.is_complete(key):
+        return None
+    return key
+
+
+def outlook_vintages(cube: Cube, forecast: str, include_retired: bool = False) -> list[str]:
+    """The outlook chart's x-axis: the year's Budget, then its forecasts by as-of.
+
+    Only the selected forecast's own fiscal year, and every offered forecast of
+    it -- not just those up to the selection, so picking an older forecast shows
+    where it sits in the year rather than truncating the year.
+    """
+    fy = cube.fiscal_year[forecast]
+    keys = [v for v in cube.visible(include_retired)
+            if cube.fiscal_year[v] == fy
+            and cube.scenario_label.get(v) in ("BUDGET", "FORECAST")]
+    if forecast not in keys:
+        keys.append(forecast)
+    return order_vintages(keys)
+
+
+def prior_forecast(cube: Cube, forecast: str, include_retired: bool = False) -> str | None:
+    """The forecast just before this one in the same year; None for the first."""
+    line = [v for v in outlook_vintages(cube, forecast, include_retired)
+            if cube.scenario_label.get(v) == "FORECAST"]
+    i = line.index(forecast) if forecast in line else 0
+    return line[i - 1] if i > 0 else None
+
+
+def default_lines(
+    cube: Cube, forecast: str, comp: str, include_retired: bool = False
+) -> list[str]:
+    """The month chart's opening lines: the year's Budget, the comparison, and
+    the forecast. With no comparison, the forecast just before stands in for it.
+    """
+    other = comp or prior_forecast(cube, forecast, include_retired)
+    offered = set(cube.visible(include_retired))
+    keys = {k for k in (year_budget(cube, forecast), other, forecast) if k}
+    return order_vintages([k for k in keys if k in offered])
+
+
+@dataclass(frozen=True)
+class BridgeStep:
+    """One bar of the bridge: a row's value in the comparison and the forecast."""
+
+    label: str
+    comp: float
+    curr: float
+    highlight: bool = False
+
+    @property
+    def delta(self) -> float:
+        return self.curr - self.comp
+
+
+@dataclass(frozen=True)
+class Bridge:
+    """``start`` + every step's delta == ``end`` (to within the dropped residual)."""
+
+    parent: Row
+    start: float
+    end: float
+    steps: tuple[BridgeStep, ...]
+
+
+#: The residual step: whatever of the parent no row above it breaks out.
+#: Corporate and TCG revenue, which have no Revenue rows; under LEGACY also the
+#: EBITDA rows it cannot derive (18, 19, 23).
+OTHER_LABEL = "Other"
+
+
+def bridge(cube: Cube, row: Row, forecast: str, comp: str, period: str) -> Bridge | None:
+    """The comparison-to-forecast bridge of a dollar row, by business unit.
+
+    A total or subtotal is broken into the derivable detail rows above it in
+    its section (Total Physical EBITDA = North America + International +
+    Eliminations). A detail row is shown inside its section's total, with its
+    own bar highlighted. Whatever the detail rows leave out becomes one
+    OTHER_LABEL step -- included only when its change rounds to a non-zero $M --
+    so the bars always run from the comparison's figure to the forecast's.
+
+    Steps stay in deck order, not sorted by size, so a business unit keeps its
+    place from one selection to the next.
+
+    None when there is nothing to bridge: no comparison, a percent row (a
+    margin's change does not split into additive pieces), a row that cannot be
+    derived, or a parent figure missing on either side.
+    """
+    if not comp or row.is_pct or not row.is_derivable:
+        return None
+    if row.row_type == "sub":
+        parent = next(r for r in ROWS if r.section == row.section and r.row_type == "total")
+    else:
+        parent = row
+    start, end = cube.value(comp, parent, period), cube.value(forecast, parent, period)
+    if start is None or end is None:
+        return None
+
+    steps: list[BridgeStep] = []
+    rest_comp, rest_curr = start, end
+    for child in ROWS:
+        if (child.section != parent.section or child.row_type != "sub"
+                or child.idx > parent.idx or not child.is_derivable):
+            continue
+        was, now = cube.value(comp, child, period), cube.value(forecast, child, period)
+        if was is None or now is None:
+            continue
+        steps.append(BridgeStep(child.label, was, now, highlight=child.idx == row.idx))
+        rest_comp -= was
+        rest_curr -= now
+    if round_half_up(abs(rest_curr - rest_comp) / 1e6):
+        steps.append(BridgeStep(OTHER_LABEL, rest_comp, rest_curr))
+    return Bridge(parent, start, end, tuple(steps))
+
+
+# ---------------------------------------------------------------------------
 # Deck reference lookup
 # ---------------------------------------------------------------------------
 def deck_value(
@@ -628,8 +1137,8 @@ def deck_value(
 ) -> float | None:
     """The deck's own figure for a cell, or None when the deck lacks it.
 
-    The deck predates Aug. FC and FY26 Actuals, so those legitimately return
-    None everywhere.
+    The deck predates the Aug 2026 FC and later vintages, so those
+    legitimately return None everywhere.
     """
     rows = deck.get(vintage)
     if not rows or row_idx >= len(rows):

@@ -245,14 +245,14 @@ Four rows render as an em-dash. Every other row shows its live figure.
 | 1 | Revenue | International | — | yes |
 | 2 | Revenue | Total Physical Cards | — | yes |
 | 3 | Revenue | Digital | `SPLIT` | yes |
-| 4 | Revenue | Total ex-Emerging Svcs | — | yes |
+| 4 | Revenue | Subtotal | — | yes |
 | 5 | Revenue | Fanatics Collect | `COMBINED` | yes |
 | 6 | Revenue | Total Revenue | — | yes |
 | 7 | Gross Margin | North America | `UNRECONCILED` | yes |
 | 8 | Gross Margin | International | `UNRECONCILED` | yes |
 | 9 | Gross Margin | Total Physical Cards | `UNRECONCILED` | yes |
 | 10 | Gross Margin | Digital | `UNRECONCILED`, `HIERARCHY` | **no** — broken residual |
-| 11 | Gross Margin | Total ex-Emerging Svcs | `UNRECONCILED` | yes |
+| 11 | Gross Margin | Subtotal | `UNRECONCILED` | yes |
 | 12 | Gross Margin | Fanatics Collect | `UNRECONCILED` | yes |
 | 13 | Gross Margin | Total Gross Margin | `UNRECONCILED` | yes |
 | 14 | EBITDA | North America | `UNRECONCILED` | yes |
@@ -261,7 +261,7 @@ Four rows render as an em-dash. Every other row shows its live figure.
 | 17 | EBITDA | Total Physical Cards | `UNRECONCILED` | yes |
 | 18 | EBITDA | Digital | `UNRECONCILED`, `SPLIT`, `HIERARCHY` | **no** — broken residual |
 | 19 | EBITDA | Corporate | `UNRECONCILED`, `SPLIT` | **no** — no expression |
-| 20 | EBITDA | Total ex-Emerging Svcs | `UNRECONCILED` | yes |
+| 20 | EBITDA | Subtotal | `UNRECONCILED` | yes |
 | 21 | EBITDA | Fanatics Collect | `UNRECONCILED`, `COMBINED` | yes |
 | 22 | EBITDA | Key Litigation Costs | `UNRECONCILED` | yes — see 6.2 |
 | 23 | EBITDA | TCG | `UNRECONCILED`, `ABSENT` | **no** — no expression |
@@ -331,7 +331,20 @@ on its own row, as the deck does — folding there would double-count.
 **Period labels are computed, not hardcoded.** They come per vintage from
 `period_date < DATE_TRUNC('MONTH', forecast_asof_date)`. The deck hardcoded its
 26A/26F suffixes, so it mislabelled every vintage other than Jul. FC. A quarter
-counts as actual only when all of its months are.
+counts as actual only when all of its months are. Since 2026-10-09 (CI-74) a
+quarter holding both kinds says so: Sep 2026 FC's Q3 is **`Q3 26A+F`** (Jul–Aug
+actual, Sep forecast — the header's hover text), where the deck, and James's Sep
+PDF, print `Q3 26F`. A YTD column can mix the same way on the comparison side
+(Aug 2026 FC's `YTD Aug 26A+F`). **FY never does**: a year with any forecast month
+stays `FY 2026F`, as the deck prints it, and only its hover text gives the split.
+A quarter a vintage holds only part of carries its months — `Q3 26A (Jul–Aug)` for
+2026 Actuals in October — though partial-year Actuals are not offered anyway.
+
+Each value block is labelled as **its own** vintage's periods
+(`Cube.period_label`). Before, the comparison block reused the forecast's labels,
+so 2025 Actuals read `Q3 26F … FY 2026F` and Aug 2026 FC read `Aug 26A` over a
+month that was still a forecast in it. The change block keeps the forecast's
+labels. The downloads carry the same headers.
 
 **FY25 actuals have been restated** since the deck was exported: some 2025A
 months were reallocated within H1. Annual and quarterly totals are unaffected;
@@ -468,3 +481,12 @@ whatever is collapsed).
 
 The four non-derivable rows render as an em-dash with no on-screen explanation.
 The explanation is section 4 (`HIERARCHY`, `SPLIT`, `ABSENT`).
+
+**The one deliberate caveat (2026-10-09):** the header reads *Collectibles
+Forecast Dashboard **(DRAFT)*** over *Numbers under validation. Not final.*, in
+amber. It is a blanket notice, not a per-figure explanation, and it comes off with
+one edit: `streamlit_app.DRAFT_NOTICE = None`. The downloads do not carry it.
+
+The row the deck calls **Total ex-Emerging Svcs** is labelled **Subtotal** in all
+three sections (CI-66); its hover text keeps the old name. The sections above
+still use the deck's name where they discuss the segment.

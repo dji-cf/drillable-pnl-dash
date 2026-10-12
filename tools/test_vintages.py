@@ -13,6 +13,7 @@ today rather than discovered in January:
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd  # noqa: E402
 
+import export  # noqa: E402
 import queries  # noqa: E402
 import table  # noqa: E402
 import transforms as tx  # noqa: E402
@@ -101,6 +103,13 @@ def check_labels() -> list[str]:
           "forecast color should follow as-of month")
     check(p, tx.vintage_color("2025A") != tx.vintage_color("2026A"),
           "adjacent Actuals years share a color")
+    # A1: the deck's "Total ex-Emerging Svcs" reads "Subtotal" in all 3 sections.
+    for sec in tx.SECTIONS_WITH_HEADER:
+        check(p, any(r.section == sec and r.label == "Subtotal" for r in tx.ROWS),
+              f"no Subtotal row in {sec}")
+        check(p, (sec, "Subtotal") in tx.ROW_TOOLTIPS, f"Subtotal in {sec} has no tooltip")
+    check(p, not any("ex-Emerging" in r.label + r.metric_label for r in tx.ROWS),
+          "a row is still labelled ex-Emerging")
     return p
 
 
@@ -198,6 +207,69 @@ def check_oct_2026() -> list[str]:
     solo = table.build_statement(cube, forecast="Sep 2026 FC", comp="",
                                  grain="annual", collapsed={})
     check(p, "dmode" not in solo, "toggle rendered with no comparison")
+    return p
+
+
+def _tier(html: str, cls: str) -> list[str]:
+    """The period headers of one header tier ('ph-comp', 'ph-curr', ...)."""
+    return re.findall(rf'<th class="{cls}[^"]*"[^>]*>([^<]*)</th>', html)
+
+
+def check_period_labels() -> list[str]:
+    """A9: mixed and partial quarters, and each block labelled as its own vintage."""
+    p: list[str] = []
+    cube = tx.build_cube(_frame(OCT_2026))
+    fc, en = "Sep 2026 FC", tx.EN_DASH
+
+    got = [lbl for _, lbl in cube.periods(fc, "quarterly")]
+    check(p, got == ["Q1 26A", "Q2 26A", "Q3 26A+F", "Q4 26F", "YTD Aug 26A", "FY 2026F"],
+          f"{fc} quarterly labels {got}")
+    for vintage, pk, want in (
+        ("Aug 2026 FC", "Q3", "Q3 26A+F"),          # Jul actual, Aug-Sep forecast
+        ("Aug 2026 FC", "Aug", "Aug 26F"),
+        ("Aug 2026 FC", "YTD:Aug", "YTD Aug 26A+F"),
+        ("Aug 2026 FC", tx.ANNUAL, "FY 2026F"),     # FY never takes A+F
+        ("2026B", "Q3", "Q3 26B"),
+        ("2025A", "Q3", "Q3 25A"),
+        ("2025A", tx.ANNUAL, "FY 2025A"),
+        ("2026A", "Q3", f"Q3 26A (Jul{en}Aug)"),    # partial: Jul + Aug only
+        ("2026A", "Q2", "Q2 26A"),
+    ):
+        got = cube.period_label(vintage, pk)
+        check(p, got == want, f"period_label({vintage!r}, {pk!r}) = {got!r}, want {want!r}")
+    for vintage, pk, want in (
+        (fc, "Q3", f"Jul{en}Aug actual, Sep forecast"),
+        (fc, tx.ANNUAL, f"Jan{en}Aug actual, Sep{en}Dec forecast"),
+        (fc, "Q2", None),
+        (fc, "Sep", None),
+        ("2026A", "Q3", f"Jul{en}Aug only"),
+        ("2026B", "Q3", None),
+        ("2025A", tx.ANNUAL, None),
+    ):
+        got = cube.period_note(vintage, pk)
+        check(p, got == want, f"period_note({vintage!r}, {pk!r}) = {got!r}, want {want!r}")
+
+    html = table.build_statement(cube, forecast=fc, comp="2025A", grain="quarterly",
+                                 collapsed={})
+    comp, curr = _tier(html, "ph-comp"), _tier(html, "ph-curr")
+    check(p, comp == ["Q1 25A", "Q2 25A", "Q3 25A", "Q4 25A", "YTD Aug 25A", "FY 2025A"],
+          f"vs 2025A: comparison headers {comp}")
+    check(p, curr == ["Q1 26A", "Q2 26A", "Q3 26A+F", "Q4 26F", "YTD Aug 26A", "FY 2026F"],
+          f"vs 2025A: forecast headers {curr}")
+    check(p, _tier(html, "ph-growth") == curr, "change block lost the forecast's labels")
+    check(p, f'title="Jul{en}Aug actual, Sep forecast">Q3 26A+F<' in html,
+          "mixed quarter header has no hover note")
+
+    monthly = table.build_statement(cube, forecast=fc, comp="Aug 2026 FC", grain="monthly",
+                                    collapsed={})
+    comp, curr = _tier(monthly, "ph-comp"), _tier(monthly, "ph-curr")
+    check(p, comp[6:8] == ["Jul 26A", "Aug 26F"] and curr[6:8] == ["Jul 26A", "Aug 26A"],
+          f"vs Aug FC: Jul/Aug headers {comp[6:8]} / {curr[6:8]}")
+
+    frame = export.statement_frame(cube, forecast=fc, comp="2025A", grain="quarterly")
+    for col in ("2025 Actuals | FY 2025A", "Sep 2026 FC | Q3 26A+F",
+                "Change vs. 2025 Actuals | Q3 26A+F"):
+        check(p, col in frame.columns, f"export lacks column {col!r}")
     return p
 
 
@@ -317,6 +389,7 @@ def main() -> None:
         ("LABELS", check_labels()),
         ("ORDERING", check_ordering()),
         ("OCT 2026", check_oct_2026()),
+        ("PERIODS", check_period_labels()),
         ("JAN 2027", check_jan_2027()),
         ("DELTA MODES", check_delta_modes()),
         ("TRENDS", check_trends()),

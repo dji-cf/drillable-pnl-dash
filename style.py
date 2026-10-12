@@ -179,6 +179,14 @@ PAGE_CSS = """
   white-space: nowrap; letter-spacing: -.2px;
 }
 .shell-header .sub { color: #7a99c0; font-size: 11px; margin-top: 3px; }
+/* streamlit_app.DRAFT_NOTICE: amber on the navy shell, as the stakeholder
+   mock-up has it. */
+.shell-header .draft {
+  color: #f6b73c; font-size: 20px; font-weight: 700; margin-left: 14px;
+}
+.shell-header .draft-note {
+  color: #f6b73c; font-size: 12px; font-weight: 600; margin: 8px 0 6px;
+}
 
 .tiles-row { display: flex; gap: 14px; margin: 4px 0 16px; }
 .tile {

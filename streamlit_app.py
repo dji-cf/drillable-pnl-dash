@@ -40,15 +40,21 @@ GRAIN_LABELS: dict[str, str] = {
     "monthly": "Monthly",
 }
 NONE_LABEL = "— None —"
+#: The header's "(DRAFT)" tag and this line, while the figures are still being
+#: validated against EPM. Set to None to drop both once they are final.
+DRAFT_NOTICE: str | None = "Numbers under validation. Not final."
 
 style.inject()
 
 
 def _shell_header(fiscal_year: str | None) -> str:
     fy = f"FY {fiscal_year} &nbsp;·&nbsp; " if fiscal_year else ""
+    tag = '<span class="draft">(DRAFT)</span>' if DRAFT_NOTICE else ""
+    note = f'<div class="draft-note">{DRAFT_NOTICE}</div>' if DRAFT_NOTICE else ""
     return (
         '<div class="shell-header">'
-        "<h1>Collectibles Forecast Dashboard</h1>"
+        f"<h1>Collectibles Forecast Dashboard{tag}</h1>"
+        f"{note}"
         f'<div class="sub">{fy}Figures in $M</div>'
         "</div>"
     )

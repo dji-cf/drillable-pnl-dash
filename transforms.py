@@ -68,6 +68,16 @@ def is_ytd(period_key: str) -> bool:
     return period_key.startswith(YTD_PREFIX)
 
 
+#: Suffix of a quarter or YTD column holding both actual and forecast months
+#: ('Q3 26A+F'). See Cube.period_label; the FY column never takes it.
+MIXED_SUFFIX = "A+F"
+
+
+def _span(months: Sequence[str]) -> str:
+    """('Jul', 'Aug') -> 'Jul-Aug'; ('Sep',) -> 'Sep'. Months are contiguous."""
+    return months[0] if len(months) == 1 else f"{months[0]}{EN_DASH}{months[-1]}"
+
+
 GRAINS: tuple[str, ...] = ("annual", "quarterly", "monthly")
 
 SECTIONS: tuple[str, ...] = ("Revenue", "Gross Margin", "EBITDA", "EBITDA Margin")
@@ -107,6 +117,7 @@ QTR_SUB_COLORS: dict[str, str] = {
 # Formatters -- ported from the deck's JS (source lines 263-286)
 # ---------------------------------------------------------------------------
 EM_DASH = "\u2014"
+EN_DASH = "\u2013"
 
 
 def round_half_up(x: float) -> int:
@@ -406,7 +417,7 @@ ROWS: tuple[Row, ...] = (
     _rev(1, "International",          "sub",      _intl),
     _rev(2, "Total Physical Cards",   "subtotal", _phys),
     _rev(3, "Digital",                "sub",      _digital_residual),
-    _rev(4, "Total ex-Emerging Svcs", "subtotal", _exem),
+    _rev(4, "Subtotal",               "subtotal", _exem),
     _rev(5, "Fanatics Collect",       "sub",      _fanlive),
     _rev(6, "Total Revenue",          "total",    _grand_total),
     # -- Gross Margin % (unreconciled) ------------------------------------
@@ -417,7 +428,7 @@ ROWS: tuple[Row, ...] = (
     _gm(8,  "International",          "International %",          "sub",      _intl),
     _gm(9,  "Total Physical Cards",   "Total Physical Cards %",   "subtotal", _phys),
     _gm(10, "Digital",                "Digital %",                "sub",      _digital_residual),
-    _gm(11, "Total ex-Emerging Svcs", "Total ex-Emerging Svcs %", "subtotal", _exem),
+    _gm(11, "Subtotal",               "Subtotal %",               "subtotal", _exem),
     _gm(12, "Fanatics Collect",       "Fanatics Collect %",       "sub",      _fanlive),
     _gm(13, "Total Gross Margin",     "Total Gross Margin %",     "total",    _grand_total),
     # -- EBITDA (unreconciled) --------------------------------------------
@@ -429,7 +440,7 @@ ROWS: tuple[Row, ...] = (
     # Corporate and TCG have NO expression: the view carries no segment for
     # either, so there is nothing to show and they render as an em-dash.
     _eb(19, "Corporate",              "sub",      None),
-    _eb(20, "Total ex-Emerging Svcs", "subtotal", _exem),
+    _eb(20, "Subtotal",               "subtotal", _exem),
     _eb(21, "Fanatics Collect",       "sub",      _fanlive),
     _eb(22, "Key Litigation Costs",   "sub",      _keylit),
     _eb(23, "TCG",                    "sub",      None),
@@ -449,6 +460,10 @@ ROW_TOOLTIPS: dict[tuple[str, str], str] = {
         "Total Gross Margin includes eliminations.")
        for sec in ("Revenue", "Gross Margin", "EBITDA")},
     **{(sec, "Fanatics Collect"): "Fanatics Live (LB_306) + Marketplace / PWCC (LB_307)"
+       for sec in ("Revenue", "Gross Margin", "EBITDA")},
+    # The deck's "Total ex-Emerging Svcs", renamed on screen (James, CI-66);
+    # the hover keeps the old name findable.
+    **{(sec, "Subtotal"): "Total ex-Emerging Services: Physical Cards + Digital + Corporate"
        for sec in ("Revenue", "Gross Margin", "EBITDA")},
 }
 
@@ -738,22 +753,81 @@ class Cube:
         """'2026' -- the fiscal year a vintage is read at."""
         return self._yyyy(vintage)
 
-    def _suffix(self, vintage: str, months: Sequence[str]) -> str:
-        """'A' actual, 'B' budget, 'F' forecast.
+    def _split(self, vintage: str, months: Sequence[str]) -> tuple[list[str], list[str]]:
+        """(actual months, forecast months) of a forecast vintage, among ``months``.
+
+        Both empty for Actuals and Budget, whose months are all one kind.
+        """
+        if self.scenario_label.get(vintage, "FORECAST") in ("ACTUAL", "BUDGET"):
+            return [], []
+        have = [m for m in months if (vintage, m) in self.month_actual]
+        return ([m for m in have if self.month_actual[(vintage, m)]],
+                [m for m in have if not self.month_actual[(vintage, m)]])
+
+    def _suffix(self, vintage: str, months: Sequence[str], mixed: bool = False) -> str:
+        """'A' actual, 'B' budget, 'F' forecast -- or MIXED_SUFFIX when asked.
 
         A quarter or a year is only 'A' when every month it contains is an
         actual -- which is what reproduces the deck's Q1 26A / Q2 26A / Q3 26F /
         Q4 26F for Jul. FC, and correctly labels older vintages that the deck's
-        hardcoded constants got wrong.
+        hardcoded constants got wrong. With ``mixed``, a period holding both
+        actual and forecast months is 'A+F' rather than 'F' (Sep FC's Q3 is
+        Jul-Aug actual, Sep forecast). The FY column never asks: a year with
+        any forecast month in it stays 'F', as in the deck.
         """
         label = self.scenario_label.get(vintage, "FORECAST")
         if label == "ACTUAL":
             return "A"
         if label == "BUDGET":
             return "B"
-        flags = [self.month_actual[(vintage, m)] for m in months
-                 if (vintage, m) in self.month_actual]
-        return "A" if flags and all(flags) else "F"
+        actual, forecast = self._split(vintage, months)
+        if actual and not forecast:
+            return "A"
+        return MIXED_SUFFIX if mixed and actual else "F"
+
+    def _held_part(self, vintage: str, period_key: str) -> list[str] | None:
+        """The months of a quarter the vintage holds, when it holds only some.
+
+        2026 Actuals in October: Q3 is Jul-Aug. None for a whole quarter, an
+        absent one, or any other period key.
+        """
+        if period_key not in QUARTER_MONTHS:
+            return None
+        present = self.months_present.get(vintage, ())
+        have = [m for m in QUARTER_MONTHS[period_key] if m in present]
+        return have if have and len(have) < len(QUARTER_MONTHS[period_key]) else None
+
+    def period_label(self, vintage: str, period_key: str) -> str:
+        """The column header for one vintage at one period key.
+
+        'Aug 26F', 'Q3 26A+F', 'YTD Aug 26A', 'FY 2026F'. The one formatter, so
+        a comparison block labelled at the forecast's period keys reads as ITS
+        OWN periods (2025 Actuals: 'Q3 25A', not the forecast's 'Q3 26A+F'). A
+        quarter the vintage holds only part of carries its months:
+        'Q3 26A (Jul-Aug)'.
+        """
+        months = self.months_of(vintage, period_key)
+        if period_key == ANNUAL:
+            return f"FY {self._yyyy(vintage)}{self._suffix(vintage, months)}"
+        head = f"YTD {months[-1]}" if is_ytd(period_key) else period_key
+        label = f"{head} {self._yy(vintage)}{self._suffix(vintage, months, mixed=True)}"
+        part = self._held_part(vintage, period_key)
+        return f"{label} ({_span(part)})" if part else label
+
+    def period_note(self, vintage: str, period_key: str) -> str | None:
+        """Hover text for a header whose label cannot say it all, else None.
+
+        'Jul-Aug actual, Sep forecast' for a period that mixes the two --
+        including FY, whose label stays 'F' -- and 'Jul-Aug only' for a
+        quarter the vintage holds only part of.
+        """
+        part = self._held_part(vintage, period_key)
+        if part:
+            return f"{_span(part)} only"
+        actual, forecast = self._split(vintage, self.months_of(vintage, period_key))
+        if actual and forecast:
+            return f"{_span(actual)} actual, {_span(forecast)} forecast"
+        return None
 
     def ytd_period(self, vintage: str) -> tuple[str, str] | None:
         """('YTD:Aug', 'YTD Aug 26A') for a vintage part-way through its year.
@@ -771,7 +845,7 @@ class Cube:
         if tuple(closed) != MONTHS[: len(closed)]:
             return None
         key = ytd_key(closed[-1])
-        return key, f"YTD {closed[-1]} {self._yy(vintage)}{self._suffix(vintage, closed)}"
+        return key, self.period_label(vintage, key)
 
     def periods(self, vintage: str, grain: str) -> list[tuple[str, str]]:
         """(period_key, label) pairs for one vintage at one grain.
@@ -782,9 +856,7 @@ class Cube:
         partial Actuals year yields its closed months rather than fabricating
         a Q4.
         """
-        yy, yyyy = self._yy(vintage), self._yyyy(vintage)
-        months = self.months_present.get(vintage, ())
-        tail = [(ANNUAL, f"FY {yyyy}{self._suffix(vintage, months)}")]
+        tail = [(ANNUAL, self.period_label(vintage, ANNUAL))]
         ytd = self.ytd_period(vintage)
         if ytd is not None:
             tail.insert(0, ytd)
@@ -792,12 +864,11 @@ class Cube:
         if grain == "annual":
             return tail
         if grain == "quarterly":
-            qs = [
-                (q, f"{q} {yy}{self._suffix(vintage, QUARTER_MONTHS[q])}")
-                for q in self.quarters_present.get(vintage, ())
-            ]
+            qs = [(q, self.period_label(vintage, q))
+                  for q in self.quarters_present.get(vintage, ())]
             return qs + tail
-        ms = [(m, f"{m} {yy}{self._suffix(vintage, (m,))}") for m in months]
+        ms = [(m, self.period_label(vintage, m))
+              for m in self.months_present.get(vintage, ())]
         return ms + tail
 
 

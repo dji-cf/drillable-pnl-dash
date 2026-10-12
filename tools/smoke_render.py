@@ -490,6 +490,22 @@ def check_periods(cube: tx.Cube) -> list[str]:
         if cube.ytd_period(jan) is not None:
             problems.append(f"{jan} has a YTD column but no closed month")
 
+    # A9: a quarter holding actual AND forecast months says so ('Q3 26A+F'); a
+    # wholly forecast one stays 'F' (Jul FC's Q3, above) and FY never mixes.
+    for v in cube.vintages:
+        if cube.scenario_label[v] != "FORECAST":
+            continue
+        for q, lbl in cube.periods(v, "quarterly"):
+            if q not in tx.QUARTER_MONTHS:
+                continue
+            kinds = {cube.month_actual.get((v, m)) for m in tx.QUARTER_MONTHS[q]}
+            mixed = kinds == {True, False}
+            if lbl.endswith(tx.MIXED_SUFFIX) != mixed:
+                problems.append(f"{v} {q}: label {lbl!r}, but months mixed = {mixed}")
+        fy = cube.periods(v, "annual")[-1][1]
+        if tx.MIXED_SUFFIX in fy:
+            problems.append(f"{v}: FY label {fy!r} took the mixed suffix")
+
     # A partial Actuals year must not fabricate periods -- and is not offered.
     for v in cube.vintages:
         if cube.scenario_label[v] != "ACTUAL" or cube.is_complete(v):

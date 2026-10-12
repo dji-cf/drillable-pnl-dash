@@ -50,8 +50,10 @@ def _columns(cube: tx.Cube, *, forecast: str, comp: str, grain: str) -> list[_Co
     periods = cube.periods(forecast, grain)
     cols: list[_Col] = []
     if comp:
-        cols += [_Col(tx.vintage_label(comp), lbl, _VALUE, comp, pk, False)
-                 for pk, lbl in periods]
+        # The comparison's own period labels, as in the grid: 'Q3 25A'.
+        cols += [_Col(tx.vintage_label(comp), cube.period_label(comp, pk), _VALUE,
+                      comp, pk, False)
+                 for pk, _ in periods]
     cols += [_Col(tx.vintage_label(forecast), lbl, _VALUE, forecast, pk, False)
              for pk, lbl in periods]
     if comp:

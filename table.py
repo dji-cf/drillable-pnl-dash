@@ -56,6 +56,7 @@ def _mode_toggle(delta_mode: str, enabled: bool) -> str:
 
 
 def _head(
+    cube: tx.Cube,
     periods: Sequence[tuple[str, str]],
     forecast: str,
     comp: str,
@@ -78,9 +79,12 @@ def _head(
         r1.append(f'<th class="grp-solo" colspan="{n}">{_esc(tx.vintage_label(forecast))}</th>')
     r1.append("</tr>")
 
-    def tier(cls: str, dim: Sequence[bool] = ()) -> str:
+    # Each value block is labelled as ITS vintage's periods (2025 Actuals reads
+    # 'Q3 25A', not the forecast's 'Q3 26A+F'); the change block keeps the
+    # forecast's. A header whose label cannot say it all carries a hover note.
+    def tier(cls: str, vintage: str, dim: Sequence[bool] = (), notes: bool = True) -> str:
         cells = []
-        for i, (pk, label) in enumerate(periods):
+        for i, (pk, _) in enumerate(periods):
             extra = " pf" if i == 0 else ""
             if pk == tx.ANNUAL:
                 extra += " fy-col"
@@ -88,16 +92,19 @@ def _head(
                 extra += " ytd-col"
             if dim and dim[i]:
                 extra += " ph-act"
-            cells.append(f'<th class="{cls}{extra}">{_esc(label)}</th>')
+            note = cube.period_note(vintage, pk) if notes else None
+            title = f' title="{_esc(note)}"' if note else ""
+            cells.append(f'<th class="{cls}{extra}"{title}>'
+                         f"{_esc(cube.period_label(vintage, pk))}</th>")
         return "".join(cells)
 
     r2 = ['<tr class="period-row">']
     if comp:
-        r2.append(tier("ph-comp"))
-        r2.append(tier("ph-curr"))
-        r2.append(tier("ph-growth", dimmed))
+        r2.append(tier("ph-comp", comp))
+        r2.append(tier("ph-curr", forecast))
+        r2.append(tier("ph-growth", forecast, dimmed, notes=False))
     else:
-        r2.append(tier("ph-solo"))
+        r2.append(tier("ph-solo", forecast))
     r2.append("</tr>")
 
     return f"<thead>{''.join(r1)}{''.join(r2)}</thead>"
@@ -217,7 +224,9 @@ def build_statement(
     the comparison is read with those same period keys, so a comparison vintage
     covering fewer periods simply yields em-dashes in the columns it lacks
     rather than reshaping the grid, and its YTD is summed over the forecast's
-    months. export.py reads the same periods, so a download matches the grid.
+    months. Its headers are its own (Cube.period_label), so the same key reads
+    'Q3 25A' over 2025 Actuals and 'Q3 26A+F' over Sep 2026 FC. export.py reads
+    the same periods and labels, so a download matches the grid.
 
     A change column is greyed where both vintages hold that period as the same
     year's actuals (Cube.same_actuals): the change is zero by construction.
@@ -228,7 +237,7 @@ def build_statement(
     """
     periods = cube.periods(forecast, grain)
     dimmed = [bool(comp) and cube.same_actuals(forecast, comp, pk) for pk, _ in periods]
-    head = _head(periods, forecast, comp, dimmed, delta_mode, toggle_enabled)
+    head = _head(cube, periods, forecast, comp, dimmed, delta_mode, toggle_enabled)
     body = _body(
         cube, periods,
         forecast=forecast, comp=comp, collapsed=collapsed,

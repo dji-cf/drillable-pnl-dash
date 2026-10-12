@@ -109,7 +109,7 @@ KNOWN_REALLOCATIONS: dict[tuple[str, int], str] = {
 }
 
 # 2026 Budget carries a constant -$484.07 in North America that propagates into
-# Total Physical Cards, Total ex-Emerging Svcs and Total Revenue at every grain.
+# Total Physical Cards, Subtotal (ex-Emerging Svcs) and Total Revenue at every grain.
 # That is 1.3e-7 of a $3.6B budget -- a restatement crumb, far below materiality,
 # but recorded rather than rounded away. Anything larger fails.
 KNOWN_ANNUAL_DRIFT_CAP = 1_000.0
@@ -729,16 +729,16 @@ _PDF_SECTIONS = {"revenue": "Revenue", "gm_pct": "Gross Margin", "adj_ebitda": "
 _PDF_LABELS = {
     ("Revenue", "north_america"): "North America", ("Revenue", "international"): "International",
     ("Revenue", "total_physical_cards"): "Total Physical Cards", ("Revenue", "digital"): "Digital",
-    ("Revenue", "total_ex_emerging"): "Total ex-Emerging Svcs",
+    ("Revenue", "total_ex_emerging"): "Subtotal",
     ("Revenue", "fanatics_collect"): "Fanatics Collect", ("Revenue", "total"): "Total Revenue",
     ("Gross Margin", "north_america"): "North America", ("Gross Margin", "international"): "International",
     ("Gross Margin", "total_physical_cards"): "Total Physical Cards", ("Gross Margin", "digital"): "Digital",
-    ("Gross Margin", "total_ex_emerging"): "Total ex-Emerging Svcs",
+    ("Gross Margin", "total_ex_emerging"): "Subtotal",
     ("Gross Margin", "fanatics_collect"): "Fanatics Collect", ("Gross Margin", "total"): "Total Gross Margin",
     ("EBITDA", "north_america"): "North America", ("EBITDA", "international"): "International",
     ("EBITDA", "eliminations"): "Eliminations", ("EBITDA", "total_physical_cards"): "Total Physical Cards",
     ("EBITDA", "digital"): "Digital", ("EBITDA", "corporate"): "Corporate",
-    ("EBITDA", "total_ex_emerging"): "Total ex-Emerging Svcs",
+    ("EBITDA", "total_ex_emerging"): "Subtotal",
     ("EBITDA", "fanatics_collect"): "Fanatics Collect", ("EBITDA", "key_litigation"): "Key Litigation Costs",
     ("EBITDA", "tcg"): "TCG", ("EBITDA", "total"): "Total EBITDA",
 }
@@ -823,7 +823,7 @@ def check_stg_identities(cube: tx.Cube) -> tuple[int, list[str]]:
     checked = 0
     total = _row("EBITDA", "Total EBITDA")
     phys = _row("EBITDA", "Total Physical Cards")
-    exem = _row("EBITDA", "Total ex-Emerging Svcs")
+    exem = _row("EBITDA", "Subtotal")
     leaves = {l: _row("EBITDA", l) for l in _EB_LEAVES}
     base = [k for _, k in queries.STG_ROW_MAP[("EBITDA", "Total EBITDA")]]
     eb_line = "ebitda"

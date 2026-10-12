@@ -26,8 +26,10 @@
 # handles the double-count outside this app. Effect: Jul. FC Total EBITDA
 # 1,855 -> 1,410. The figures therefore sit FURTHER from the Jul 2026 FC deck
 # than before, which makes the deck's cost basis the open question, not this
-# source. The app states no caveats on screen: ISSUES.md section 0 is the single
-# record, and anyone quoting these numbers needs it.
+# source. The app states no per-figure caveats on screen, only the blanket
+# "(DRAFT) Numbers under validation. Not final." header
+# (streamlit_app.DRAFT_NOTICE): ISSUES.md section 0 is the single record, and
+# anyone quoting these numbers needs it.
 #
 # SOURCE: queries.py reads the BASE TABLE
 # ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_BY_LOB, not CARDPLN_PL_BY_LOB_V. The view
@@ -53,10 +55,10 @@ entities:
     # POWER_ANALYST_ORACLE_PROD already owns Streamlit apps and can read
     # FCT_EPM + use ANALYTICS_WAREHOUSE.
     identifier:
-      name: DRILLABLE_PNL_DASH_STG
+      name: DRILLABLE_PNL_DASH
       database: ORACLE_DATA_PROD
       schema: SANDBOX
-    title: "FCT — Drillable P&L (Collectibles Forecast) — STG PREVIEW"
+    title: "FCT — Drillable P&L (Collectibles Forecast)"
     stage: streamlit_stage            # created automatically if absent
     runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
     compute_pool: SYSTEM_COMPUTE_POOL_CPU
