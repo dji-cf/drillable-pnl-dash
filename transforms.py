@@ -161,6 +161,29 @@ def fmt_tile(v: float | None) -> str:
     return f"${float(v) / 1e9:.2f}B"
 
 
+def fmt_tile_m(v: float | None) -> str:
+    """Headline tile figure in millions, for the BU pages: '$412M', '($12M)'.
+
+    fmt_tile's billions would print Digital and Collect as '$0.09B'.
+    """
+    if _is_missing(v):
+        return EM_DASH
+    m = float(v) / 1e6           # type: ignore[arg-type]
+    s = f"${round_half_up(abs(m)):,}M"
+    return f"({s})" if m < 0 else s
+
+
+def favour(cls: str, cost: bool) -> str:
+    """A change cell's class, with green and red swapped on a cost row.
+
+    delta_fmt colours every increase green; on a cost line an increase is the
+    bad news.
+    """
+    if not cost:
+        return cls
+    return {"gpos": "gneg", "gneg": "gpos"}.get(cls, cls)
+
+
 #: How the change column reads on dollar rows: a percent change ("pct", the
 #: deck's only mode) or the gross difference in $M ("usd"). Percent rows are
 #: basis points in BOTH modes -- a "% change of a margin" is not a quantity
@@ -361,11 +384,14 @@ class Row:
     section: str
     label: str            # as shown in the statement table
     metric_label: str     # as shown in the Trends metric picker
-    row_type: str         # sub | subtotal | total | margin
+    row_type: str         # sub | subtotal | total | margin | ratio (BU pages)
     is_pct: bool
-    num_line: str | None  # key into queries.PL_LINES
+    num_line: str | None  # key into queries.PL_LINES (or BU_LINES)
     den_line: str | None  # only for is_pct rows
     expr: Callable[[Segs], float] | None
+    #: An increase is UNFAVOURABLE (a cost line), so the change cell's green and
+    #: red swap. False on all 26 consolidated rows; the BU pages set it.
+    cost: bool = False
 
     @property
     def gaps(self) -> tuple[str, ...]:
@@ -879,9 +905,17 @@ _COMP = "_compensation"
 
 
 def build_cube(df: pd.DataFrame) -> Cube:
-    """Index the master frame for lookup. ~724 rows, so cost is negligible."""
+    """Index the master frame for lookup. ~2.8k rows, so cost is negligible.
+
+    Under STG the BU pages' lines (queries.BU_LINES) are indexed too. They
+    share STG_SEGMENTS, so a BU row is the same kind of expression as a
+    consolidated one. A frame without them (LEGACY, or an older pickle) simply
+    yields a cube without them.
+    """
     line_of = {sql_name: key for key, sql_name in queries.PL_LINES.items()}
     line_of[queries.COMPENSATION_LINE] = _COMP
+    if queries.SOURCE == "STG":
+        line_of.update({sql_name: key for key, sql_name in queries.BU_LINES.items()})
     seg_cols = [f"seg_{k}" for k in queries.SEGMENTS]
 
     segs: dict[tuple[str, str, str], dict[str, float]] = {}

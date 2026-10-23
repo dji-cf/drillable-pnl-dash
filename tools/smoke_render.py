@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd  # noqa: E402
 import snowflake.connector  # noqa: E402
 
+import bu  # noqa: E402
 import charts  # noqa: E402
 import export  # noqa: E402
 import queries  # noqa: E402
@@ -560,6 +561,125 @@ def check_dropdowns(cube: tx.Cube, df: pd.DataFrame) -> list[str]:
     return problems
 
 
+def check_bu(cube: tx.Cube) -> list[str]:
+    """The BU pages: grid shape, collapse, cost colouring, export, tiles, drill."""
+    problems: list[str] = []
+    fcs = tx.forecast_options(cube)
+    forecast, prior = fcs[0], fcs[1]
+    has_ytd = cube.ytd_period(forecast) is not None
+
+    # The consolidated grid's drill links: exactly the 8 Revenue / EBITDA BU
+    # rows under STG, none under LEGACY -- the same gate streamlit_app uses.
+    drill = table.DRILL if bu.AVAILABLE else None
+    html = table.build_statement(cube, forecast=forecast, comp=prior, grain="annual",
+                                 collapsed={}, drill=drill)
+    data_rows = [r for r in body_rows(html) if "section-hdr" not in r]
+    linked = [i for i, r in enumerate(data_rows) if "data-bu=" in r]
+    want = [0, 1, 3, 5, 14, 15, 18, 21] if bu.AVAILABLE else []
+    if linked != want:
+        problems.append(f"drill attributes on rows {linked}, expected {want}")
+    if "data-bu=" in table.build_statement(cube, forecast=forecast, comp=prior,
+                                           grain="annual", collapsed={}):
+        problems.append("drill attributes rendered with drill=None")
+    if not bu.AVAILABLE:
+        return problems
+
+    for key in bu.BU_KEYS:
+        rows = bu.rows(key, cube)
+        tips = bu.tooltips(key)
+        name = bu.BU_NAMES[key]
+        for grain, n_periods in EXPECTED_PERIODS.items():
+            for comp in ("", prior):
+                for collapse in (False, True):
+                    tag = f"{name} {grain}/{'comp' if comp else 'solo'}" \
+                          f"{'/collapsed' if collapse else ''}"
+                    collapsed = {s: collapse for s in bu.SECTIONS_WITH_HEADER}
+                    html = table.build_statement(
+                        cube, forecast=forecast, comp=comp, grain=grain,
+                        collapsed=collapsed, rows=rows,
+                        sections=bu.SECTIONS_WITH_HEADER, tooltips=tips,
+                    )
+                    all_rows = body_rows(html)
+                    data = [r for r in all_rows if "section-hdr" not in r]
+                    hdrs = [r for r in all_rows if "section-hdr" in r]
+                    if len(data) != len(rows):
+                        problems.append(f"{tag}: {len(data)} data rows, expected {len(rows)}")
+                        continue
+                    if len(hdrs) != len(bu.SECTIONS_WITH_HEADER):
+                        problems.append(f"{tag}: {len(hdrs)} section headers")
+                    want_cells = (n_periods + has_ytd) * (3 if comp else 1) + 1
+                    for r in data:
+                        if len(re.findall(r"<td\b", r)) != want_cells:
+                            problems.append(f"{tag}: a row without {want_cells} cells")
+                            break
+                    if "data-bu=" in html:
+                        problems.append(f"{tag}: a BU grid carries drill links")
+                    for row, tr in zip(rows, data):
+                        if row.row_type == "ratio" and "row-ratio" not in tr:
+                            problems.append(f"{tag}: {row.label} lacks row-ratio")
+                        # Ratio rows collapse with their section, like sub.
+                        hidden = "collapsed" in tr.split(">", 1)[0]
+                        should = collapse and row.row_type in table.COLLAPSIBLE
+                        if hidden != should:
+                            problems.append(f"{tag}: {row.label} hidden={hidden}")
+                        cells = re.findall(r'<td class="curr-cell[^"]*">(.*?)</td>', tr)
+                        if not [c for c in cells if c != tx.EM_DASH]:
+                            problems.append(f"{tag}: {row.label} prints no figure")
+
+        # Cost colouring: a cost row that rose is red, a revenue row that rose
+        # is green -- over every vintage pair and row, at the annual figure.
+        seen_cost = False
+        for row in rows:
+            for comp in fcs[1:]:
+                cur, was = (cube.value(forecast, row, tx.ANNUAL),
+                            cube.value(comp, row, tx.ANNUAL))
+                d = tx.delta_fmt(cur, was, row.is_pct)
+                if not d or d["cls"] != "gpos":
+                    continue
+                html = table.build_statement(cube, forecast=forecast, comp=comp,
+                                             grain="annual", collapsed={}, rows=rows,
+                                             sections=bu.SECTIONS_WITH_HEADER)
+                tr = [r for r in body_rows(html) if "section-hdr" not in r][row.idx]
+                cls = re.findall(r'<td class="gc (\w+)', tr)[-1]
+                want_cls = "gneg" if row.cost else "gpos"
+                if cls != want_cls:
+                    problems.append(f"{name} {row.label} rose vs {comp}: {cls}, "
+                                    f"want {want_cls}")
+                seen_cost |= row.cost
+                break
+        if not seen_cost:
+            problems.append(f"{name}: no cost row rose against any vintage -- "
+                            f"cost colouring unexercised")
+
+        # Export: one row per BU line, the grid's columns; BU in the file name.
+        for grain in tx.GRAINS:
+            for comp in ("", prior):
+                frame = export.statement_frame(cube, forecast=forecast, comp=comp,
+                                               grain=grain, rows=rows)
+                want = len(cube.periods(forecast, grain)) * (3 if comp else 1)
+                if frame.shape != (len(rows), (4 if comp else 3) + want):
+                    problems.append(f"{name} export {grain}: shape {frame.shape}")
+        slug = bu.URL_PATHS[key].split("-")[0]
+        for label, payload, fname, _ in export.downloads(
+                cube, forecast=forecast, comp=prior, grain="monthly",
+                delta_mode="pct", pulled_at=None, rows=rows, subject=bu.subject(key)):
+            if slug not in fname:
+                problems.append(f"{name} {label}: file name {fname!r} lacks the BU")
+            if not payload:
+                problems.append(f"{name} {label}: empty payload")
+
+        # Tiles: four, in $M, none muted.
+        tiles = table.build_tiles(cube, forecast=forecast, comp=prior,
+                                  tiles=bu.tiles(rows), money=tx.fmt_tile_m)
+        vals = re.findall(r'<div class="tile-val[^"]*">(.*?)</div>', tiles)
+        if len(vals) != 4:
+            problems.append(f"{name} tiles: {len(vals)} tiles, expected 4")
+        dollars = [v for v in vals if not v.endswith("%")]
+        if not all(re.fullmatch(r"\(?\$[\d,]+M\)?", v) for v in dollars):
+            problems.append(f"{name} tiles: dollar tiles not in $M: {dollars}")
+    return problems
+
+
 def main() -> None:
     df = fetch()
     cube = tx.build_cube(df)
@@ -574,6 +694,7 @@ def main() -> None:
         ("EXPORT", check_export(cube)),
         ("TILES", check_tiles(cube)),
         ("CHARTS", check_charts(cube)),
+        ("BU PAGES", check_bu(cube)),
     )
     failed = False
     for name, problems in suites:

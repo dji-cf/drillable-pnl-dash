@@ -155,6 +155,21 @@ tr.row-total td.gpos  { background: #e2f2e6; }
 tr.row-total td.gneg  { background: #fde8e8; }
 tr.collapsed { display: none !important; }
 
+/* BU pages (not in the deck): a "% of Net Revenue" / COGS % line, one step
+   under its dollar line. */
+tr.row-ratio td { font-style: italic; color: #5a6e8a; }
+tr.row-ratio td.lbl { padding-left: 34px; color: #6b7fa3; }
+tr.row-ratio td.comp-cell { background: #f5f7fc; }
+
+/* A consolidated label that opens its BU P&L page (interactive._JS 'drill').
+   Only rendered when the component is live, so it never looks clickable on
+   the static fallback. */
+td.lbl[data-bu] { cursor: pointer; }
+td.lbl[data-bu]:hover { color: #1d4ed8; text-decoration: underline; }
+td.lbl[data-bu]:hover::after {
+  content: "\\203A"; margin-left: 6px; text-decoration: none; display: inline-block;
+}
+
 /* Placeholder cells (not in the deck): present, aligned, visibly not a figure.
    Only the four rows the source cannot express reach this state. */
 tr.gap-row td.curr-cell,

@@ -131,6 +131,25 @@ def _q(sql: str, ttl: timedelta = _CACHE_TTL) -> pd.DataFrame:
     return df
 
 
+def call_scalar(sql: str, params: list) -> object:
+    """Run ``sql`` with qmark binds and return the first column of the first row.
+
+    The ONE bound, uncached path in the app, for the agent chat. It goes
+    straight to a connector cursor rather than through ``conn.query`` for two
+    reasons: an agent call must never be served from cache, and the user's text
+    has to be bound, not pasted into the SQL. ``conn.query`` would cache it, and
+    on older Streamlit its cache key ignores ``params`` altogether (see the
+    caching note in queries.py). Streamlit sets the connector's paramstyle to
+    qmark, so placeholders are ``?`` and ``params`` is a list.
+    """
+    cur = _connection().cursor()
+    try:
+        row = cur.execute(sql, params).fetchone()
+    finally:
+        cur.close()
+    return row[0] if row else None
+
+
 # --------------------------------------------------------------------------
 # The one feed
 # --------------------------------------------------------------------------

@@ -4,8 +4,8 @@ Same columns as table.build_statement -- both read cube.periods(forecast,
 grain), so the comparison | current | change blocks, the YTD column and the
 greyed same-actuals cells line up one for one -- but carrying RAW figures
 rather than the grid's rounded strings, so a download can be summed and
-re-cut. All 26 rows are written regardless of which sections are collapsed:
-collapse is a view state, not a filter.
+re-cut. Every row of the statement is written regardless of which sections
+are collapsed: collapse is a view state, not a filter.
 
 Units, per cell:
   * dollar rows       $M (float, unrounded)
@@ -97,16 +97,18 @@ def _change_unit(row: tx.Row, delta_mode: str) -> str:
 
 
 def statement_frame(
-    cube: tx.Cube, *, forecast: str, comp: str, grain: str, delta_mode: str = "pct"
+    cube: tx.Cube, *, forecast: str, comp: str, grain: str, delta_mode: str = "pct",
+    rows: Sequence[tx.Row] = tx.ROWS,
 ) -> pd.DataFrame:
     """One row per statement line, one column per grid column, raw figures.
 
     Leading columns Section / Line Item / Unit (and Change unit, with a
-    comparison); data columns are named '<block> | <period>'.
+    comparison); data columns are named '<block> | <period>'. ``rows``
+    defaults to the consolidated 26; a BU page passes its own.
     """
     cols = _columns(cube, forecast=forecast, comp=comp, grain=grain)
     records = []
-    for row in tx.ROWS:
+    for row in rows:
         rec: dict[str, object] = {
             "Section": row.section,
             "Line Item": row.label,
@@ -122,25 +124,38 @@ def statement_frame(
     return pd.DataFrame.from_records(records)
 
 
-def title(*, forecast: str, comp: str, grain: str) -> str:
+#: What a download is OF when no BU page names it: the consolidated statement.
+CONSOLIDATED = "Collectibles Forecast"
+
+
+def _slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+
+
+def title(*, forecast: str, comp: str, grain: str, subject: str = CONSOLIDATED) -> str:
     vs = f" vs. {tx.vintage_label(comp)}" if comp else ""
-    return (f"Collectibles Forecast — {tx.vintage_label(forecast)}{vs} "
+    return (f"{subject} — {tx.vintage_label(forecast)}{vs} "
             f"— {GRAIN_TITLES.get(grain, grain)}")
 
 
-def filename(*, forecast: str, comp: str, grain: str, ext: str) -> str:
-    """'pnl_sep-2026-fc_vs_aug-2026-fc_monthly.xlsx'."""
-    def slug(s: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
-    vs = f"_vs_{slug(tx.vintage_label(comp))}" if comp else ""
-    return f"pnl_{slug(tx.vintage_label(forecast))}{vs}_{grain}.{ext}"
+def filename(*, forecast: str, comp: str, grain: str, ext: str,
+             subject: str = CONSOLIDATED) -> str:
+    """'pnl_sep-2026-fc_vs_aug-2026-fc_monthly.xlsx'.
+
+    A BU page's subject goes after the prefix:
+    'pnl_north-america_sep-2026-fc_monthly.xlsx'.
+    """
+    who = "" if subject == CONSOLIDATED else f"{_slug(subject)}_"
+    vs = f"_vs_{_slug(tx.vintage_label(comp))}" if comp else ""
+    return f"pnl_{who}{_slug(tx.vintage_label(forecast))}{vs}_{grain}.{ext}"
 
 
 def to_csv(
-    cube: tx.Cube, *, forecast: str, comp: str, grain: str, delta_mode: str = "pct"
+    cube: tx.Cube, *, forecast: str, comp: str, grain: str, delta_mode: str = "pct",
+    rows: Sequence[tx.Row] = tx.ROWS,
 ) -> bytes:
     frame = statement_frame(cube, forecast=forecast, comp=comp, grain=grain,
-                            delta_mode=delta_mode)
+                            delta_mode=delta_mode, rows=rows)
     # utf-8-sig: the BOM is what makes Excel, opening the CSV directly, decode
     # it as UTF-8 rather than the local code page.
     return frame.to_csv(index=False).encode("utf-8-sig")
@@ -177,6 +192,8 @@ def to_xlsx(
     grain: str,
     delta_mode: str = "pct",
     pulled_at: datetime | None = None,
+    rows: Sequence[tx.Row] = tx.ROWS,
+    subject: str = CONSOLIDATED,
 ) -> bytes:
     """A formatted workbook: title, two-tier header, frozen labels and header."""
     import xlsxwriter   # imported here so a missing wheel only breaks the download
@@ -196,7 +213,7 @@ def to_xlsx(
         return cache[key]
 
     # -- title ----------------------------------------------------------
-    ws.write(0, 0, title(forecast=forecast, comp=comp, grain=grain),
+    ws.write(0, 0, title(forecast=forecast, comp=comp, grain=grain, subject=subject),
              fmt(bold=True, font_size=13, font_color="#1a2b4a"))
     change_note = ""
     if comp:
@@ -242,7 +259,7 @@ def to_xlsx(
             or tx.is_ytd(col.period_key), border=1, border_color="#1a2b4a"))
 
     # -- body -----------------------------------------------------------
-    for r, row in enumerate(tx.ROWS):
+    for r, row in enumerate(rows):
         emphasis = row.row_type in ("total", "subtotal", "margin")
         fill = {"total": "#e8edf7", "margin": "#e4eaf8",
                 "subtotal": "#f5f7fc"}.get(row.row_type)
@@ -253,9 +270,12 @@ def to_xlsx(
             row_props.update(top=1, top_color="#b8c5d8")
 
         ws.write(first + r, 0, row.section, fmt(font_color="#6b7fa3", **row_props))
-        indent = 2 if row.row_type == "sub" else 1 if row.row_type == "subtotal" else 0
+        # Ratio rows (BU pages: "% of Net Revenue") sit one step under their
+        # dollar line, italic.
+        indent = {"sub": 2, "subtotal": 1, "ratio": 3}.get(row.row_type, 0)
+        label_props = dict(row_props, italic=True) if row.row_type == "ratio" else row_props
         ws.write(first + r, 1, row.label,
-                 fmt(indent=indent, font_color="#1a2b4a", **row_props))
+                 fmt(indent=indent, font_color="#1a2b4a", **label_props))
 
         for k, col in enumerate(cols):
             v = _cell(cube, row, col, forecast=forecast, comp=comp, delta_mode=delta_mode)
@@ -287,16 +307,19 @@ def downloads(
     grain: str,
     delta_mode: str,
     pulled_at: datetime | None,
+    rows: Sequence[tx.Row] = tx.ROWS,
+    subject: str = CONSOLIDATED,
 ) -> Sequence[tuple[str, bytes, str, str]]:
     """(label, data, file name, mime) for each download button, in order."""
     kw = dict(forecast=forecast, comp=comp, grain=grain)
     return (
         ("Download Excel",
-         to_xlsx(cube, delta_mode=delta_mode, pulled_at=pulled_at, **kw),
-         filename(ext="xlsx", **kw),
+         to_xlsx(cube, delta_mode=delta_mode, pulled_at=pulled_at, rows=rows,
+                 subject=subject, **kw),
+         filename(ext="xlsx", subject=subject, **kw),
          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         ("Download CSV",
-         to_csv(cube, delta_mode=delta_mode, **kw),
-         filename(ext="csv", **kw),
+         to_csv(cube, delta_mode=delta_mode, rows=rows, **kw),
+         filename(ext="csv", subject=subject, **kw),
          "text/csv"),
     )

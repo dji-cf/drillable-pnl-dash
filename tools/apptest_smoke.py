@@ -25,7 +25,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
+from streamlit.util import calc_hash  # noqa: E402
 
+import bu  # noqa: E402
 import transforms as tx  # noqa: E402
 
 APP = ROOT / "streamlit_app.py"
@@ -36,6 +38,19 @@ def run(**state) -> AppTest:
     at = AppTest.from_file(str(APP), default_timeout=TIMEOUT)
     for k, v in state.items():
         at.session_state[k] = v
+    return at.run()
+
+
+def goto(at: AppTest, url_path: str) -> AppTest:
+    """Switch an AppTest session to a callable st.navigation page and run it.
+
+    AppTest.switch_page only resolves FILE pages (Streamlit 1.63); a callable
+    st.Page is addressed by calc_hash(url_path), its script hash. _page_hash is
+    private -- acceptable in a dev tool pinned to this project's .venv. An empty
+    url_path means the default page, which an empty hash selects (the default
+    page's own hash is of its inferred name, not of '').
+    """
+    at._page_hash = calc_hash(url_path) if url_path else ""
     return at.run()
 
 
@@ -274,12 +289,100 @@ def main() -> None:
     if at.exception:
         problems.append(f"all sections collapsed: {describe(at)}")
 
+    # -- BU pages ---------------------------------------------------------
+    if bu.AVAILABLE:
+        problems += check_bu_pages(forecast, prior, budget)
     print()
     if problems:
         print("PROBLEMS:", *problems, sep="\n  ")
         print("\nFAILED")
         raise SystemExit(1)
     print("ALL APPTEST CHECKS PASS")
+
+
+def check_bu_pages(forecast: str, prior: str, budget: str) -> list[str]:
+    """Each BU page runs, and the shell's state survives real page switches.
+
+    One AppTest session per sequence, so session_state carries across goto()
+    exactly as it does across st.switch_page in a browser session.
+    """
+    problems: list[str] = []
+    for key in bu.BU_KEYS:
+        for comp in ("", budget):
+            at = run(fc_sel=forecast, comp_sel=comp)
+            at = goto(at, bu.URL_PATHS[key])
+            tag = f"{bu.BU_NAMES[key]} vs {comp or 'none'}"
+            if at.exception:
+                problems.append(f"{tag}: {describe(at)}")
+                continue
+            if at.error or at.warning:
+                problems.append(f"{tag}: error/warning boxes "
+                                f"{[e.value for e in (*at.error, *at.warning)]}")
+            if len(at.get("vega_lite_chart")):
+                problems.append(f"{tag}: a Trends chart rendered on a BU page")
+            if len(at.get("download_button")) != 2:
+                problems.append(f"{tag}: {len(at.get('download_button'))} downloads")
+            # Downloads are named for the BU (export.filename). The button
+            # proto carries a media URL, which may or may not hold the name;
+            # check it only when it carries any file name at all.
+            slug = bu.URL_PATHS[key].split("-")[0]
+            for dl in at.get("download_button"):
+                url = getattr(getattr(dl, "proto", None), "url", "") or ""
+                if "pnl_" in url and slug not in url:
+                    problems.append(f"{tag}: download {url!r} lacks the BU")
+            tiles = " ".join(m.value for m in at.markdown if "tile-val" in m.value)
+            if not re.search(r"\$[\d,]+M", tiles):
+                problems.append(f"{tag}: BU tiles not in $M")
+            if ss(at, f"collapsed_{key}") != {s: False for s in bu.SECTIONS_WITH_HEADER}:
+                problems.append(f"{tag}: collapsed_{key} = {ss(at, f'collapsed_{key}')}")
+    print(f"BU pages: {len(bu.BU_KEYS) * 2} runs")
+
+    # Forecast / vs. / grain carry consolidated -> BU -> BU -> consolidated.
+    at = run(fc_sel=prior, comp_sel=budget, grain="monthly")
+    for key in ("na", "collect", ""):
+        url = bu.URL_PATHS.get(key, "")
+        at = goto(at, url)
+        where = url or "consolidated"
+        if at.exception:
+            problems.append(f"carry-over at {where}: {describe(at)}")
+            break
+        got = (ss(at, "fc_sel"), ss(at, "comp_sel"))
+        if got != (prior, budget):
+            problems.append(f"carry-over at {where}: Forecast / vs. = {got}, "
+                            f"expected {(prior, budget)}")
+        grain_key = f"grain_{key}" if key else "grain"
+        if ss(at, grain_key) != "monthly":
+            problems.append(f"carry-over at {where}: {grain_key} = "
+                            f"{ss(at, grain_key)!r}, expected 'monthly'")
+    else:
+        print("carry-over ok · Forecast / vs. / grain survive page switches")
+
+    # A View picked on one page wins over whatever another page last held:
+    # NA at monthly, Consolidated switched to quarterly, back to NA.
+    at = goto(run(grain="monthly"), bu.URL_PATHS["na"])
+    at = goto(at, "")
+    at.button_group(key="grain").set_value("quarterly").run()
+    at = goto(at, bu.URL_PATHS["na"])
+    if at.exception:
+        problems.append(f"grain round-trip: {describe(at)}")
+    elif ss(at, "grain_na") != "quarterly":
+        problems.append(f"grain round-trip: NA shows {ss(at, 'grain_na')!r} after "
+                        f"Consolidated picked 'quarterly'")
+
+    # Collapse state is per BU.
+    at = goto(run(), bu.URL_PATHS["na"])
+    at.session_state["collapsed_na"] = {s: True for s in bu.SECTIONS_WITH_HEADER}
+    at = goto(at, bu.URL_PATHS["intl"])
+    if at.exception:
+        problems.append(f"per-BU collapse: {describe(at)}")
+    elif any(ss(at, "collapsed_intl", {}).values()):
+        problems.append(f"collapsed_intl inherited NA's state: {ss(at, 'collapsed_intl')}")
+    elif not all(ss(at, "collapsed_na", {}).values()):
+        problems.append("collapsed_na was lost on switching BU")
+    at = goto(at, bu.URL_PATHS["na"])
+    if at.exception:
+        problems.append(f"collapsed BU page: {describe(at)}")
+    return problems
 
 
 if __name__ == "__main__":

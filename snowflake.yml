@@ -84,5 +84,7 @@ entities:
       - style.py
       - charts.py
       - export.py
+      - bu.py
+      - agent_chat.py                 # sidebar Cortex Agent chat
       - pyproject.toml                # container runtime reads this for deps
       - .streamlit/config.toml        # SiS honors the [theme] subset

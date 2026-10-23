@@ -13,7 +13,7 @@ shadow DOM. The tiles are ordinary page markup.
 from __future__ import annotations
 
 import html
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 import transforms as tx
 
@@ -27,6 +27,20 @@ _ROW_CLASS = {
     "total": "row-total",
     "subtotal": "row-subtotal",
     "sub": "row-sub",
+    "ratio": "row-ratio",
+}
+
+#: Row types that hide when their section collapses. Subtotals and totals stay.
+COLLAPSIBLE: frozenset[str] = frozenset({"sub", "ratio"})
+
+#: Consolidated rows whose label opens a BU P&L page: (section, label) -> BU key
+#: (bu.BU_KEYS). Revenue and EBITDA rows 0, 1, 3, 5, 14, 15, 18, 21. Keyed like
+#: tx.ROW_TOOLTIPS, so adding the Gross Margin rows is one more section.
+DRILL: dict[tuple[str, str], str] = {
+    (sec, label): bu
+    for sec in ("Revenue", "EBITDA")
+    for label, bu in (("North America", "na"), ("International", "intl"),
+                      ("Digital", "digital"), ("Fanatics Collect", "collect"))
 }
 
 
@@ -122,18 +136,22 @@ def _body(
     collapsed: Mapping[str, bool],
     dimmed: Sequence[bool],
     delta_mode: str,
+    rows: Sequence[tx.Row],
+    sections: Sequence[str],
+    tooltips: Mapping[tuple[str, str], str],
+    drill: Mapping[tuple[str, str], str] | None,
 ) -> str:
     n = len(periods)
     total_cols = 1 + n * (3 if comp else 1)
     out: list[str] = ["<tbody>"]
     current_section: str | None = None
 
-    for row in tx.ROWS:
+    for row in rows:
         section = row.section
 
         if section != current_section:
             current_section = section
-            if section in tx.SECTIONS_WITH_HEADER:
+            if section in sections:
                 caret = CARET_CLOSED if collapsed.get(section) else CARET_OPEN
                 # The name sits in its own sticky label cell, with a filler
                 # spanning the rest. A single cell spanning the full width is
@@ -149,7 +167,7 @@ def _body(
         # Only detail rows collapse; subtotals and totals stay visible, as in
         # the deck. Rendered with the class rather than skipped so the ported
         # `tr.collapsed{display:none}` rule stays the single control.
-        hidden = bool(collapsed.get(section)) and row.row_type == "sub"
+        hidden = bool(collapsed.get(section)) and row.row_type in COLLAPSIBLE
         # The only rows that show dashes rather than figures are the four the
         # source cannot express: 19/23 have no expression, 10/18 have one over a
         # residual the source has broken. See ISSUES.md section 4.
@@ -162,9 +180,11 @@ def _body(
             classes.append("gap-row")
 
         out.append(f'<tr class="{" ".join(classes)}" data-sec="{_esc(section)}">')
-        tip = tx.ROW_TOOLTIPS.get((row.section, row.label))
+        tip = tooltips.get((row.section, row.label))
         title = f' title="{_esc(tip)}"' if tip else ""
-        out.append(f'<td class="lbl"{title}>{_esc(row.label)}</td>')
+        bu = drill.get((row.section, row.label)) if drill else None
+        link = f' data-bu="{_esc(bu)}"' if bu else ""
+        out.append(f'<td class="lbl"{link}{title}>{_esc(row.label)}</td>')
 
         fmt = tx.fmt_pct if row.is_pct else tx.fmt_m
 
@@ -198,8 +218,9 @@ def _body(
                 if delta is None:
                     out.append(f'<td class="gc gflat{pf}">{tx.EM_DASH}</td>')
                 else:
+                    cls = tx.favour(delta["cls"], row.cost)
                     out.append(
-                        f'<td class="gc {delta["cls"]}{pf}">{_esc(delta["text"])}</td>'
+                        f'<td class="gc {cls}{pf}">{_esc(delta["text"])}</td>'
                     )
 
         out.append("</tr>")
@@ -217,8 +238,18 @@ def build_statement(
     collapsed: Mapping[str, bool],
     delta_mode: str = "pct",
     toggle_enabled: bool = True,
+    rows: Sequence[tx.Row] = tx.ROWS,
+    sections: Sequence[str] = tx.SECTIONS_WITH_HEADER,
+    tooltips: Mapping[tuple[str, str], str] = tx.ROW_TOOLTIPS,
+    drill: Mapping[tuple[str, str], str] | None = None,
 ) -> str:
     """The full statement table, ready to mount in the component.
+
+    ``rows`` / ``sections`` / ``tooltips`` default to the consolidated page;
+    a BU page passes its own (bu.rows). ``drill`` maps (section, label) to a BU
+    key and puts ``data-bu`` on those label cells, which interactive._JS turns
+    into a 'drill' click; with None the markup is the consolidated grid's as
+    it always was.
 
     Period columns come from the SELECTED FORECAST vintage, as in the deck --
     the comparison is read with those same period keys, so a comparison vintage
@@ -242,6 +273,7 @@ def build_statement(
         cube, periods,
         forecast=forecast, comp=comp, collapsed=collapsed,
         dimmed=dimmed, delta_mode=delta_mode,
+        rows=rows, sections=sections, tooltips=tooltips, drill=drill,
     )
     return f'<div class="table-wrap"><table>{head}{body}</table></div>'
 
@@ -257,9 +289,19 @@ _TILES: tuple[tuple[str, int], ...] = (
 
 
 def build_tiles(
-    cube: tx.Cube, *, forecast: str, comp: str, delta_mode: str = "pct"
+    cube: tx.Cube,
+    *,
+    forecast: str,
+    comp: str,
+    delta_mode: str = "pct",
+    tiles: Sequence[tuple[str, tx.Row]] | None = None,
+    money: Callable[[float | None], str] = tx.fmt_tile,
 ) -> str:
-    """The three headline tiles, on the annual figure.
+    """The headline tiles, on the annual figure.
+
+    ``tiles`` is (label, Row) pairs, defaulting to the consolidated three
+    (_TILES); ``money`` formats the dollar tiles -- billions by default, a BU
+    page passes tx.fmt_tile_m.
 
     Total EBITDA and EBITDA Margin come from a cost basis that is corrected for
     the source's Compensation double-count but is still short in actual months.
@@ -267,9 +309,10 @@ def build_tiles(
     muted branch below is for a tile whose row cannot be derived at all -- none
     of the current three, but _TILES is meant to be editable.
     """
+    if tiles is None:
+        tiles = [(label, tx.ROWS[idx]) for label, idx in _TILES]
     out = ['<div class="tiles-row">']
-    for label, idx in _TILES:
-        row = tx.ROWS[idx]
+    for label, row in tiles:
         placeholder = not row.is_derivable
 
         value = cube.value(forecast, row, tx.ANNUAL)
@@ -278,15 +321,16 @@ def build_tiles(
         elif row.is_pct:
             val_html = f'<div class="tile-val">{tx.fmt_pct(value)}</div>'
         else:
-            val_html = f'<div class="tile-val">{tx.fmt_tile(value)}</div>'
+            val_html = f'<div class="tile-val">{money(value)}</div>'
 
         delta_html = '<div class="tile-delta"></div>'
         if comp and not placeholder:
             delta = tx.delta_fmt(value, cube.value(comp, row, tx.ANNUAL), row.is_pct,
                                  mode=delta_mode, usd_suffix="M")
             if delta:
-                cls = ("pos" if delta["cls"] == "gpos"
-                       else "neg" if delta["cls"] == "gneg" else "")
+                tone = tx.favour(delta["cls"], row.cost)
+                cls = ("pos" if tone == "gpos"
+                       else "neg" if tone == "gneg" else "")
                 delta_html = (
                     f'<div class="tile-delta {cls}">vs. {_esc(tx.vintage_label(comp))}: '
                     f'{_esc(delta["text"])}</div>'

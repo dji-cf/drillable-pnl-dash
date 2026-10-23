@@ -44,4 +44,6 @@ py-modules = [
     "style",
     "charts",
     "export",
+    "bu",
+    "agent_chat",
 ]

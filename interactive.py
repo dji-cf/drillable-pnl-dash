@@ -1,8 +1,10 @@
 """The statement grid as a clickable Component v2.
 
-Two things are clickable: the section headers (collapse / expand) and the
-% / $ toggle in the change block's header. Each fires its own trigger --
-'toggle' and 'mode' -- and statement() reports which one fired.
+Three things are clickable: the section headers (collapse / expand), the
+% / $ toggle in the change block's header, and -- on the consolidated page --
+the labels of the rows that open a BU P&L page (``data-bu``, see
+table.DRILL). Each fires its own trigger -- 'toggle', 'mode' and 'drill' -- and
+statement() reports which one fired.
 
 Three constraints shape this file, all of them properties of the runtime rather
 than choices:
@@ -32,7 +34,9 @@ would snap a horizontally scrolled table back to its left edge -- and the
 toggle sits at the far RIGHT (the change block), so every click would lose the
 user's place. The exported function therefore carries scrollLeft across the
 replacement, from the outgoing table or, if the mount itself was recreated,
-from the last scroll position seen (module scope again).
+from the last scroll position seen (module scope again). That memory is keyed
+by the grid (``data.grid``, the component key): one module serves every page,
+and a BU grid must not open at the consolidated grid's scroll offset.
 
 DEGRADATION. The grid is the dashboard; the clicking is a convenience. So a
 component that cannot render must not take the page down with it. Two ways that
@@ -52,18 +56,19 @@ _SHELL_HTML = '<div class="pnl"><div class="mount"></div></div>'
 
 _JS = """
 let clicks = 0;
-let lastLeft = 0;
+const lastLeft = {};
 export default function ({ data, setTriggerValue, parentElement }) {
+  const grid = data.grid || '';
   const mount = parentElement.querySelector('.mount');
   const prev = mount.querySelector('.table-wrap');
-  const left = prev ? prev.scrollLeft : lastLeft;
+  const left = prev ? prev.scrollLeft : (lastLeft[grid] || 0);
   mount.innerHTML = data.html;
 
   const wrap = mount.querySelector('.table-wrap');
   if (wrap) {
     wrap.scrollLeft = left;
-    lastLeft = wrap.scrollLeft;
-    wrap.addEventListener('scroll', () => { lastLeft = wrap.scrollLeft; });
+    lastLeft[grid] = wrap.scrollLeft;
+    wrap.addEventListener('scroll', () => { lastLeft[grid] = wrap.scrollLeft; });
   }
 
   mount.querySelectorAll('tr.section-hdr[data-sec]').forEach((tr) => {
@@ -80,11 +85,17 @@ export default function ({ data, setTriggerValue, parentElement }) {
       setTriggerValue('mode', btn.getAttribute('data-mode') + '|' + clicks);
     });
   });
+  mount.querySelectorAll('td.lbl[data-bu]').forEach((td) => {
+    td.addEventListener('click', () => {
+      clicks += 1;
+      setTriggerValue('drill', td.getAttribute('data-bu') + '|' + clicks);
+    });
+  });
 }
 """
 
 #: The triggers _JS fires, in the order statement() checks them.
-TRIGGERS: tuple[str, ...] = ("toggle", "mode")
+TRIGGERS: tuple[str, ...] = ("toggle", "mode", "drill")
 
 #: True when the runtime has the API at all. Streamlit 1.57 is the floor for
 #: st.components.v2; the interpreter on the global PATH here carries 1.48, so
@@ -110,17 +121,21 @@ def statement(html: str, *, key: str) -> tuple[str, str] | None:
     """Mount the statement grid; return the click that caused this run, if any.
 
     ``('toggle', 'Revenue')`` for a section header, ``('mode', 'usd')`` for the
-    change toggle. Non-None only on the script run caused by a click, so the
-    caller updates its own session_state and lets the next run re-render.
+    change toggle, ``('drill', 'na')`` for a BU label. Non-None only on the
+    script run caused by a click, so the caller updates its own session_state
+    (or switches page) and lets the next run re-render.
     Returns None on the static fallback path, where nothing is clickable.
     """
     global _RENDER_FAILURE
 
     if interactive_available():
         try:
-            res = _renderer(key=key, data={"html": html},
+            # Every trigger gets a callback: Component v2 only guarantees a
+            # result attribute for a trigger that has one.
+            res = _renderer(key=key, data={"html": html, "grid": key},
                             on_toggle_change=lambda: None,
-                            on_mode_change=lambda: None)
+                            on_mode_change=lambda: None,
+                            on_drill_change=lambda: None)
         except Exception as exc:  # noqa: BLE001 -- degrade, never take the page down
             _RENDER_FAILURE = f"{type(exc).__name__}: {exc}"
         else:
@@ -147,17 +162,17 @@ def _render_static(html: str) -> None:
 
 def unavailable_reason() -> str | None:
     """Why the grid's clicks are off, or None when they are working."""
+    what = ("Clicks in the table (section collapse, the % / $ toggle, opening a "
+            "business unit) are disabled")
     if not HAS_COMPONENTS_V2:
         return (
-            f"Section collapse and the % / $ toggle are disabled: this "
-            f"interpreter runs Streamlit "
+            f"{what}: this interpreter runs Streamlit "
             f"{st.__version__}, and `st.components.v2` needs >= 1.57. Launch via "
             f"`.\\run.ps1` so the project's own .venv is used."
         )
     if _RENDER_FAILURE is not None:
         return (
-            f"Section collapse and the % / $ toggle are disabled: the table "
-            f"component did not render "
+            f"{what}: the table component did not render "
             f"({_RENDER_FAILURE}). The statement below is complete but static."
         )
     return None

@@ -4,8 +4,8 @@ ONE query, no bind parameters, run once per session and pivoted in pandas.
 That is a deliberate design choice for three reasons:
 
 1.  It is small. 15 vintages x 17 periods x 3-4 P&L lines is ~750-1,000
-    rows, so fetching the whole cube costs less than fetching slices on
-    demand.
+    rows (~2.8k under STG, which adds the 8 BU-page lines), so fetching the
+    whole cube costs less than fetching slices on demand.
 2.  Both dropdowns and all three grain toggles become client-side. Changing the
     forecast, the comparison, or Annual/Quarterly/Monthly does not touch
     Snowflake at all.
@@ -41,8 +41,8 @@ import os
 #: so data.py, transforms.py and table.py carry no source-specific code. The env
 #: var lets tools and a local `streamlit run` A/B the two without an edit:
 #:     PNL_SOURCE=STG streamlit run streamlit_app.py
-#: LEGACY stays the default (and the deployed behaviour) until the STG gates in
-#: tools/validate_vs_deck.py pass and Maya says go.
+#: STG is the default and, since 2026-10-09, what the deployed app reads. The BU
+#: P&L pages (bu.py) exist only under STG: LEGACY has no account detail.
 SOURCE: str = os.environ.get("PNL_SOURCE", "STG").upper()
 if SOURCE not in ("LEGACY", "STG"):
     raise ValueError(f"PNL_SOURCE must be LEGACY or STG, got {SOURCE!r}")
@@ -333,6 +333,24 @@ _STG_COGS_ACCOUNTS: tuple[str, ...] = (
     "ACX_Compensation", "ACX_Product Development",
 )
 
+#: The BU pages' COGS buckets, each a set of the children above @ CC_10000.
+#: Compensation goes into Other (it is inside the COGS parent, so leaving it out
+#: would stop the buckets summing to Total COGS). A COGS parent with no children
+#: (LB_394's GCP elims) nets into Standard Manufacturing -- see BU_LINES.
+_STG_COGS_BUCKETS: dict[str, tuple[str, ...]] = {
+    "mfg":   ("ACX_Manufacturing",),
+    "roy":   ("ACX_Royalties",),
+    "mg":    ("ACX_MG Shortfall",),
+    "autos": ("ACX_Autos & Relics",),
+    "other": ("ACX_Net Freight Expense", "ACX_Product Development",
+              "ACX_Obsolescence", "ACX_Compensation"),
+}
+assert sorted(a for accts in _STG_COGS_BUCKETS.values() for a in accts) == sorted(
+    _STG_COGS_ACCOUNTS), "every COGS child must sit in exactly one BU bucket"
+
+#: Marketing, inside the SG&A parent (AC_50000 @ CC_30000) in every slice.
+_STG_MARKETING = ("AC_60001", "CC_30000")
+
 #: Segment columns the STG query emits. The ten base LOBs carry the line's own
 #: value (revenue / GM / EBITDA). The three CARVE-OUTS are COSTS (positive
 #: amounts) that sit inside a LOB's SG&A but belong to a different deck row;
@@ -354,7 +372,45 @@ STG_SEGMENTS: dict[str, str] = {
     "tcgcc":   "LB_301 AC_50000 @ CC_70123",   # carve-out: TCG, old method
 }
 
-_STG_LINES: tuple[str, ...] = tuple(PL_LINES.values())
+#: The BU P&L pages' own lines, cube key -> pl_line value. They ride in STG_SQL
+#: next to the three reported lines -- one statement, one cache, one pull time
+#: -- and BU Net Revenue / Gross Margin / EBITDA read those three directly, so a
+#: BU page ties to the consolidated rows by construction. Values per LOB, all
+#: COGS @ CC_10000 like the COGS rule above:
+#:   cogs     COALESCE(parent, children), i.e. the cogs that Gross Margin uses
+#:   std_mfg  Manufacturing + (cogs - children): a parent-only COGS lands here
+#:   other    Freight + Product Development + Obsolescence + Compensation
+#:   mkt      AC_60001 @ CC_30000
+#:   sga      SG&A parent less Marketing (the carve-outs subtract on top, below)
+BU_LINES: dict[str, str] = {
+    "cogs":    "BU_COGS",
+    "std_mfg": "BU_STD_MFG",
+    "roy":     "BU_ROYALTIES",
+    "mg":      "BU_MG_SHORTFALL",
+    "autos":   "BU_AUTOS_RELICS",
+    "other":   "BU_OTHER_COGS",
+    "mkt":     "BU_MARKETING",
+    "sga":     "BU_SGA_EX_MKT",
+}
+
+#: pl_line -> its per-LOB value over by_lob's columns. The ONE list behind both
+#: STG_SQL's `lines` VALUES and _stg_pivot's CASE, so every line has an explicit
+#: branch -- EBITDA used to be the ELSE, where a new line would have landed.
+_STG_LINE_VALUE: dict[str, str] = {
+    PL_LINES["net_revenue"]:  "rev",
+    PL_LINES["gross_margin"]: "rev - cogs",
+    PL_LINES["ebitda"]:       "rev - cogs - sga",
+    BU_LINES["cogs"]:         "cogs",
+    BU_LINES["std_mfg"]:      "mfg + (cogs - ZEROIFNULL(children))",
+    BU_LINES["roy"]:          "roy",
+    BU_LINES["mg"]:           "mg",
+    BU_LINES["autos"]:        "autos",
+    BU_LINES["other"]:        "other",
+    BU_LINES["mkt"]:          "mkt",
+    BU_LINES["sga"]:          "sga - mkt",
+}
+
+_STG_LINES: tuple[str, ...] = tuple(_STG_LINE_VALUE)
 
 # FY 'FY26' -> 2026, for building PERIOD_DATE, which STG does not carry.
 _STG_YEAR = "'20' || SUBSTR(FISCAL_YEAR, 3, 2)"
@@ -372,20 +428,48 @@ def _sql_list(names: tuple[str, ...]) -> str:
 
 
 def _stg_pivot() -> str:
-    rev, gm, eb = PL_LINES["net_revenue"], PL_LINES["gross_margin"], PL_LINES["ebitda"]
+    """One column per STG segment, its value chosen per line by _STG_LINE_VALUE.
+
+    The three CARVE-OUTS carry +amount on the EBITDA line (adding the cost
+    back to its LOB's EBITDA, as before) and -amount on the BU SG&A line, and
+    are 0 on every other line. So one set of terms works on every line: NA's
+    STG_ROW_MAP terms read NA SG&A ex Key Litigation on the sga line, deck row 14
+    on the EBITDA line, and plain ex-Topps NA everywhere else.
+    """
+    eb, sga = PL_LINES["ebitda"], BU_LINES["sga"]
+    case = " ".join(f"WHEN '{line}' THEN {expr}" for line, expr in _STG_LINE_VALUE.items())
     cols = [
-        f"    ZEROIFNULL(SUM(IFF(lob = '{lob}', CASE pl_line"
-        f" WHEN '{rev}' THEN rev WHEN '{gm}' THEN rev - cogs"
-        f" ELSE rev - cogs - sga END, NULL))) AS seg_{key}"
+        f"    ZEROIFNULL(SUM(IFF(lob = '{lob}', CASE pl_line {case} END, NULL))) AS seg_{key}"
         for key, lob in STG_SEGMENTS.items()
         if not key.startswith(("pisa", "tcg"))
     ]
-    cols += [
-        f"    ZEROIFNULL(SUM(IFF(pl_line = '{eb}' AND lob = 'LB_301', pisa,  NULL))) AS seg_pisa301",
-        f"    ZEROIFNULL(SUM(IFF(pl_line = '{eb}' AND lob = 'LB_302', pisa,  NULL))) AS seg_pisa302",
-        f"    ZEROIFNULL(SUM(IFF(pl_line = '{eb}' AND lob = 'LB_301', tcgcc, NULL))) AS seg_tcgcc",
-    ]
+    for key, lob, amount in (("pisa301", "LB_301", "pisa"),
+                             ("pisa302", "LB_302", "pisa"),
+                             ("tcgcc",   "LB_301", "tcgcc")):
+        cols.append(
+            f"    ZEROIFNULL(SUM(IFF(lob = '{lob}', CASE pl_line"
+            f" WHEN '{eb}' THEN {amount} WHEN '{sga}' THEN -{amount} END,"
+            f" NULL))) AS seg_{key}"
+        )
     return ",\n".join(cols)
+
+
+def _stg_bucket_sums() -> str:
+    """by_lob's per-bucket COGS columns (+ children, the sum of all eight)."""
+    cols = [
+        f"SUM(IFF(account IN ({_sql_list(accts)}) AND cost_center = 'CC_10000', "
+        f"amount, 0)) AS {key}"
+        for key, accts in _STG_COGS_BUCKETS.items()
+    ]
+    # NULL, not 0, when no child exists: std_mfg's residual must be the whole
+    # parent in a parent-only LOB.
+    cols.append(
+        f"SUM(IFF(account IN ({_sql_list(_STG_COGS_ACCOUNTS)}) AND cost_center = "
+        f"'CC_10000', amount, NULL)) AS children"
+    )
+    acct, cc = _STG_MARKETING
+    cols.append(f"SUM(IFF(account = '{acct}' AND cost_center = '{cc}', amount, 0)) AS mkt")
+    return ",\n      ".join(cols)
 
 
 STG_SQL = f"""
@@ -425,6 +509,7 @@ by_lob AS (
       SUM(IFF(account = 'AC_50000' AND cost_center = 'CC_30000', amount, 0)) AS sga,
       SUM(IFF(account = 'AC_61002' AND cost_center = 'CC_40313', amount, 0)) AS pisa,
       SUM(IFF(account = 'AC_50000' AND cost_center = 'CC_70123', amount, 0)) AS tcgcc,
+      {_stg_bucket_sums()},
       COUNT(DISTINCT entity)       AS n_entity,
       COUNT(DISTINCT intercompany) AS n_icp
   FROM src
@@ -528,6 +613,25 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     ("EBITDA", "Total EBITDA"):           _ALL_LOBS,
     ("EBITDA Margin", "EBITDA Margin"):   _ALL_LOBS,
 }
+
+# ---------------------------------------------------------------------------
+# BU P&L pages -- their LOB grouping IS the consolidated page's
+# ---------------------------------------------------------------------------
+# Each BU's terms are its consolidated EBITDA row's, verbatim, carve-outs
+# included: on every line except EBITDA and BU SG&A the carve-outs are 0, so
+# North America reads ex-Topps (LB_302 + LB_304 + LB_394) everywhere, its SG&A
+# excludes the NASE Key Litigation cost, and its EBITDA is row 14 exactly. If
+# the consolidated grouping changes, the BU pages follow.
+BU_DEFS: dict[str, _T] = {
+    "na":      STG_ROW_MAP[("EBITDA", "North America")],
+    "intl":    STG_ROW_MAP[("EBITDA", "International")],
+    "digital": STG_ROW_MAP[("EBITDA", "Digital")],
+    "collect": STG_ROW_MAP[("EBITDA", "Fanatics Collect")],
+}
+#: North America's revenue memo lines: the Topps eliminations the BU basis
+#: leaves out, and the folded figure that equals consolidated row 0.
+BU_NA_TOPPS: _T = ((1, "topps"),)
+BU_NA_INCL_ELIMS: _T = STG_ROW_MAP[("Revenue", "North America")]
 
 # ---------------------------------------------------------------------------
 # Rebind for the chosen source
