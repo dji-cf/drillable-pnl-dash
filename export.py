@@ -132,14 +132,16 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
-def title(*, forecast: str, comp: str, grain: str, subject: str = CONSOLIDATED) -> str:
+def title(*, forecast: str, comp: str, grain: str, subject: str = CONSOLIDATED,
+          draft: str = "") -> str:
     vs = f" vs. {tx.vintage_label(comp)}" if comp else ""
-    return (f"{subject} — {tx.vintage_label(forecast)}{vs} "
+    lead = f"{draft} " if draft else ""
+    return (f"{lead}{subject} — {tx.vintage_label(forecast)}{vs} "
             f"— {GRAIN_TITLES.get(grain, grain)}")
 
 
 def filename(*, forecast: str, comp: str, grain: str, ext: str,
-             subject: str = CONSOLIDATED) -> str:
+             subject: str = CONSOLIDATED, draft: str = "") -> str:
     """'pnl_sep-2026-fc_vs_aug-2026-fc_monthly.xlsx'.
 
     A BU page's subject goes after the prefix:
@@ -147,7 +149,8 @@ def filename(*, forecast: str, comp: str, grain: str, ext: str,
     """
     who = "" if subject == CONSOLIDATED else f"{_slug(subject)}_"
     vs = f"_vs_{_slug(tx.vintage_label(comp))}" if comp else ""
-    return f"pnl_{who}{_slug(tx.vintage_label(forecast))}{vs}_{grain}.{ext}"
+    pre = f"{_slug(draft).upper()}_" if draft else ""   # 'DRAFT_pnl_...'
+    return f"{pre}pnl_{who}{_slug(tx.vintage_label(forecast))}{vs}_{grain}.{ext}"
 
 
 def to_csv(
@@ -194,6 +197,7 @@ def to_xlsx(
     pulled_at: datetime | None = None,
     rows: Sequence[tx.Row] = tx.ROWS,
     subject: str = CONSOLIDATED,
+    draft: str = "",
 ) -> bytes:
     """A formatted workbook: title, two-tier header, frozen labels and header."""
     import xlsxwriter   # imported here so a missing wheel only breaks the download
@@ -213,7 +217,8 @@ def to_xlsx(
         return cache[key]
 
     # -- title ----------------------------------------------------------
-    ws.write(0, 0, title(forecast=forecast, comp=comp, grain=grain, subject=subject),
+    ws.write(0, 0, title(forecast=forecast, comp=comp, grain=grain, subject=subject,
+                   draft=draft),
              fmt(bold=True, font_size=13, font_color="#1a2b4a"))
     change_note = ""
     if comp:
@@ -309,17 +314,18 @@ def downloads(
     pulled_at: datetime | None,
     rows: Sequence[tx.Row] = tx.ROWS,
     subject: str = CONSOLIDATED,
+    draft: str = "",
 ) -> Sequence[tuple[str, bytes, str, str]]:
     """(label, data, file name, mime) for each download button, in order."""
     kw = dict(forecast=forecast, comp=comp, grain=grain)
     return (
         ("Download Excel",
          to_xlsx(cube, delta_mode=delta_mode, pulled_at=pulled_at, rows=rows,
-                 subject=subject, **kw),
-         filename(ext="xlsx", subject=subject, **kw),
+                 subject=subject, draft=draft, **kw),
+         filename(ext="xlsx", subject=subject, draft=draft, **kw),
          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         ("Download CSV",
          to_csv(cube, delta_mode=delta_mode, rows=rows, **kw),
-         filename(ext="csv", subject=subject, **kw),
+         filename(ext="csv", subject=subject, draft=draft, **kw),
          "text/csv"),
     )

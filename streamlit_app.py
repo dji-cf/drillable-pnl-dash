@@ -33,8 +33,23 @@ from typing import Callable, Mapping, Sequence
 
 import streamlit as st
 
+#: The one draft switch. Every "DRAFT" string in the UI and the downloads is
+#: built from this; set to "" at go-live to drop them all (and DRAFT_NOTICE).
+DRAFT_LABEL = "(DRAFT)"
+
+
+def _drafted(text: str) -> str:
+    """'(DRAFT) <text>' while DRAFT_LABEL is set, else text unchanged."""
+    return f"{DRAFT_LABEL} {text}" if DRAFT_LABEL else text
+
+
+def _tab(text: str) -> str:
+    """Browser-tab form: 'DRAFT — <text>'."""
+    return f"{DRAFT_LABEL.strip('()')} — {text}" if DRAFT_LABEL else text
+
+
 st.set_page_config(
-    page_title="Drillable P&L — Collectibles Forecast",
+    page_title=_tab("Drillable P&L — Collectibles Forecast"),
     page_icon="\U0001F4C8",
     layout="wide",
 )
@@ -55,8 +70,8 @@ GRAIN_LABELS: dict[str, str] = {
     "monthly": "Monthly",
 }
 NONE_LABEL = "— None —"
-#: The header's "(DRAFT)" tag and this line, while the figures are still being
-#: validated against EPM. Set to None to drop both once they are final.
+#: The line under the header while the figures are still being validated
+#: against EPM. Shown only while DRAFT_LABEL is set.
 DRAFT_NOTICE: str | None = "Numbers under validation. Not final."
 
 #: Plain (non-widget) session key the grain controls share, so the View picked
@@ -69,11 +84,14 @@ style.inject()
 
 def _shell_header(fiscal_year: str | None) -> str:
     fy = f"FY {fiscal_year} &nbsp;·&nbsp; " if fiscal_year else ""
-    tag = '<span class="draft">(DRAFT)</span>' if DRAFT_NOTICE else ""
-    note = f'<div class="draft-note">{DRAFT_NOTICE}</div>' if DRAFT_NOTICE else ""
+    # Leads the title now, so its margin goes on the right instead of the left.
+    tag = (f'<span class="draft" style="margin:0 14px 0 0">{DRAFT_LABEL}</span>'
+           if DRAFT_LABEL else "")
+    note = (f'<div class="draft-note">{DRAFT_NOTICE}</div>'
+            if DRAFT_LABEL and DRAFT_NOTICE else "")
     return (
         '<div class="shell-header">'
-        f"<h1>Collectibles Forecast Dashboard{tag}</h1>"
+        f"<h1>{tag}Collectibles Forecast Dashboard</h1>"
         f"{note}"
         f'<div class="sub">{fy}Figures in $M</div>'
         "</div>"
@@ -254,6 +272,7 @@ def _statement_view(
     for col, (label, payload, fname, mime) in zip(dl_cols, export.downloads(
         cube, forecast=forecast, comp=comp, grain=grain,
         delta_mode=delta_mode, pulled_at=pulled_at, rows=rows, subject=subject,
+        draft=DRAFT_LABEL,
     )):
         with col:
             st.download_button(
@@ -429,7 +448,7 @@ def bu_page(key: str) -> None:
             st.page_link(CONSOLIDATED, label="Consolidated",
                          icon=":material/arrow_back:")
         with here:
-            st.markdown(f"› **{bu.subject(key)}**")
+            st.markdown(f"› **{_drafted(bu.subject(key))}**")
         _bu_links(key)
 
     rows = bu.rows(key, cube)
@@ -460,12 +479,12 @@ def collect_page() -> None:
     bu_page("collect")
 
 
-CONSOLIDATED = st.Page(consolidated_page, title="Consolidated", default=True)
+CONSOLIDATED = st.Page(consolidated_page, title=_tab("Consolidated"), default=True)
 _BU_FUNCS = {"na": north_america_page, "intl": international_page,
              "digital": digital_page, "collect": collect_page}
 #: Empty under LEGACY: no BU pages are registered at all.
 BU_PAGES: dict[str, st.Page] = {
-    key: st.Page(_BU_FUNCS[key], title=bu.subject(key), url_path=bu.URL_PATHS[key])
+    key: st.Page(_BU_FUNCS[key], title=_tab(bu.subject(key)), url_path=bu.URL_PATHS[key])
     for key in bu.BU_KEYS
 } if bu.AVAILABLE else {}
 
