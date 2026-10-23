@@ -396,6 +396,30 @@ it at the far right of the Monthly view does not jump back to January.
 while its row definitions supplied `isPct`, so all 7 Gross Margin rows and EBITDA
 Margin were plotted and labelled on the dollar scale. Fixed here.
 
+**BU pages: North America is NASE + GCP** (2026-10-23, Maya's review of c119831
+against James's *2027 Budget | P&L: North America Excl GCP* slide). Consolidated
+North America is LB_302 (NASE) + LB_304 (GCP gross: GC Packaging, the card
+printer) + LB_394 (GCP eliminations, which take GCP's sales to Topps back out);
+James's slide is LB_302 alone. The NA page folded all three into one basis, which
+caused all four of Maya's findings: LB_394's −$286M of parent-only COGS sat in
+Standard Mfg (7% vs the slide's 12%), LB_304's $120M of Compensation sat in Other
+(7% vs 3%), COGS read $35M low, SG&A $12M high, and EBITDA $22M high. The %s were
+over a different base too. The page now shows every $ line as **NASE**, then
+**GCP**, then the **NA total**, which still ties to the consolidated rows (Net
+Sales = row 0, EBITDA = row 14). The COGS buckets are NASE-only. Every % is
+over Net Sales incl. Topps eliminations, as on the slide, so the NA Gross
+Profit % (60%) is *not* consolidated row 7 (which is over revenue ex Topps) — by
+decision. Labels follow the slide: Gross Revenue, Net Sales, Gross Profit.
+Compensation stays in Other: NASE's is only $3.1M, and the slide's Other %
+reproduces only with it in. The other BU pages now show Total COGS as $ (with
+the buckets as %), not as %. `tools/validate_bu.py` gates the split (NA =
+NASE+GCP, every vintage × period) and the 70 printed Sep 2026 FC cells of the
+slide (NA SLIDE). Under the old grouping that gate fails 35 of 70 cells, with
+exactly Maya's numbers. The slide's 2027B columns are not checkable: STG has
+no FY27 budget yet. Also: Digital's page now always lists **Autos & Relics**,
+since the 2026-10-23 load put $0.067M on LB_305 in Sep 2026 Actuals (and so
+Oct 2026 FC).
+
 ---
 
 ## 8. Source selection

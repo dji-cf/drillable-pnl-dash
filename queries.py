@@ -335,8 +335,10 @@ _STG_COGS_ACCOUNTS: tuple[str, ...] = (
 
 #: The BU pages' COGS buckets, each a set of the children above @ CC_10000.
 #: Compensation goes into Other (it is inside the COGS parent, so leaving it out
-#: would stop the buckets summing to Total COGS). A COGS parent with no children
-#: (LB_394's GCP elims) nets into Standard Manufacturing -- see BU_LINES.
+#: would stop the buckets summing to Total COGS). James's NA slide confirms it:
+#: its Other % reproduces only with Compensation in (see BU_NA_NASE below).
+#: A COGS parent with no children (LB_394's GCP elims) nets into Standard
+#: Manufacturing -- see BU_LINES.
 _STG_COGS_BUCKETS: dict[str, tuple[str, ...]] = {
     "mfg":   ("ACX_Manufacturing",),
     "roy":   ("ACX_Royalties",),
@@ -629,9 +631,38 @@ BU_DEFS: dict[str, _T] = {
     "collect": STG_ROW_MAP[("EBITDA", "Fanatics Collect")],
 }
 #: North America's revenue memo lines: the Topps eliminations the BU basis
-#: leaves out, and the folded figure that equals consolidated row 0.
+#: leaves out, and the folded figure that equals consolidated row 0 -- the
+#: page's Net Sales, and the denominator of its NA-total % rows.
 BU_NA_TOPPS: _T = ((1, "topps"),)
 BU_NA_INCL_ELIMS: _T = STG_ROW_MAP[("Revenue", "North America")]
+
+# North America = NASE + GCP (Megan's FC file, and her 9/30 mapping):
+#   LB_302  NASE -- what James's "2027 Budget | P&L: North America Excl GCP"
+#           slide is, alone.
+#   LB_304  GCP gross -- GC Packaging, the card printer.
+#   LB_394  GCP eliminations -- takes GCP's sales to Topps etc. back out. Its
+#           COGS is parent-only (AC_50000), so it lands in Standard Mfg.
+# The page shows each $ line as NASE, then GCP, then the NA total (BU_DEFS).
+# GCP's revenue nets to ~0 but its cost does not. SEP26RF FY26, $M:
+#   COGS    NASE 1,824.9 + GCP -34.9 = 1,790.0
+#   SG&A    NASE   314.5 + GCP  12.4 =   326.9   (ex Marketing, ex Key Lit)
+#   EBITDA  NASE 2,011.7 + GCP  22.6 = 2,034.3   (= row 14)
+# Folding GCP into the buckets is what made NA Std Mfg read 7% against the
+# slide's 12% and Other 7% against 3% (LB_304 carries $120M of Compensation).
+# Compensation itself belongs in Other: NASE's is $3.1M, and the slide's Other
+# % only reproduces with it included.
+#
+# NASE: pisa302 is 0 off the EBITDA / SG&A lines, so this reads LB_302 on
+# every line and NASE ex Key Litigation on SG&A and EBITDA -- the slide's basis.
+BU_NA_NASE: _T = ((1, "l302"), (1, "pisa302"))
+#: The slide's "Net Sales": NASE gross revenue less the Topps eliminations.
+#: Denominator of every NASE % row (net_revenue line only).
+BU_NA_NASE_NET_SALES: _T = ((1, "l302"), (1, "topps"))
+BU_NA_GCP: _T = ((1, "l304"), (1, "l394"))
+assert sorted(BU_NA_NASE + BU_NA_GCP) == sorted(BU_DEFS["na"]), (
+    "North America must be exactly NASE + GCP")
+assert sorted(BU_NA_NASE_NET_SALES + BU_NA_GCP) == sorted(BU_NA_INCL_ELIMS), (
+    "North America Net Sales must be exactly NASE Net Sales + GCP")
 
 # ---------------------------------------------------------------------------
 # Rebind for the chosen source

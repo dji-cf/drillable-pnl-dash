@@ -14,10 +14,15 @@ every carve-out column separately. These are what the new SQL can get wrong:
     net_revenue - cogs                 == gross_margin
     gross_margin - mkt - sga           == ebitda   (also proves carve-out sign/scope)
 TIES -- BU rows to consolidated rows, every vintage x period key. They hold by
-construction now, so they guard bu.py's wiring rather than the SQL.
+construction now, so they guard bu.py's wiring rather than the SQL. North
+America ties its Net Sales / EBITDA totals (rows 0 / 14), not Gross Profit %:
+that is over Net Sales incl. Topps, so it is not row 7 by design.
+NA = NASE+GCP -- North America's NASE + GCP lines add to its totals.
+NA SLIDE -- the NASE rows round to James's printed "NA Excl GCP" slide.
 """
 from __future__ import annotations
 
+import math
 import os
 import sys
 import tempfile
@@ -170,12 +175,21 @@ def _row(section: str, label: str) -> tx.Row:
     return next(r for r in tx.ROWS if (r.section, r.label) == (section, label))
 
 
-def _bu_row(rows: tuple[tx.Row, ...], label: str) -> tx.Row:
-    return next(r for r in rows if r.label == label)
+def _bu_row(rows: tuple[tx.Row, ...], label: str, section: str | None = None) -> tx.Row:
+    return next(r for r in rows if r.label == label
+                and (section is None or r.section == section))
 
 
 def _keys(cube: tx.Cube, v: str) -> list[str]:
     return sorted({pk for g in tx.GRAINS for pk, _ in cube.periods(v, g)})
+
+
+def _cogs_parts(key: str, rows: tuple[tx.Row, ...]) -> tuple[list[tx.Row], tx.Row, tx.Row]:
+    """(bucket % rows, the COGS $ row they split, its denominator row)."""
+    buckets = [r for r in rows if r.section == "Cost of Goods Sold" and r.is_pct]
+    if key == "na":
+        return buckets, _bu_row(rows, bu.NA_NASE_COGS), _bu_row(rows, bu.NA_NASE_NET_SALES)
+    return buckets, _bu_row(rows, "Total COGS"), _bu_row(rows, "Net Revenue")
 
 
 def check_ties(cube: tx.Cube) -> tuple[int, list[str]]:
@@ -184,15 +198,20 @@ def check_ties(cube: tx.Cube) -> tuple[int, list[str]]:
     for key in bu.BU_KEYS:
         name = bu.BU_NAMES[key]
         rows = bu.rows(key, cube)
-        pairs = [
-            (_bu_row(rows, "Gross Margin %"), _row("Gross Margin", name)),
-            (_bu_row(rows, "EBITDA"), _row("EBITDA", name)),
-        ]
         if key == "na":
-            pairs.append((_bu_row(rows, "North America incl. eliminations"),
-                          _row("Revenue", name)))
+            # North America's totals are the consolidated rows. Its Gross Profit %
+            # is over Net Sales (incl. Topps), so it is NOT row 7 -- by decision.
+            pairs = [
+                (_bu_row(rows, "EBITDA"), _row("EBITDA", name)),
+                (_bu_row(rows, bu.NA_NET_SALES), _row("Revenue", name)),
+            ]
         else:
-            pairs.append((_bu_row(rows, "Net Revenue"), _row("Revenue", name)))
+            pairs = [
+                (_bu_row(rows, "Gross Margin %"), _row("Gross Margin", name)),
+                (_bu_row(rows, "EBITDA"), _row("EBITDA", name)),
+                (_bu_row(rows, "Net Revenue"), _row("Revenue", name)),
+            ]
+        buckets, cogs, den = _cogs_parts(key, rows)
         for v in cube.vintages:
             for pk in _keys(cube, v):
                 for b, m in pairs:
@@ -204,27 +223,115 @@ def check_ties(cube: tx.Cube) -> tuple[int, list[str]]:
                     if x is None or y is None or abs(x - y) > tol:
                         fails.append(f"{name} {b.label} {v} {pk}: {x} != main "
                                      f"{m.section}/{m.label} {y}")
-                if key == "na":
-                    rev = cube.value(v, _bu_row(rows, "Net Revenue"), pk)
-                    topps = cube.value(v, _bu_row(rows, "Topps eliminations"), pk)
-                    main = cube.value(v, _row("Revenue", name), pk)
-                    if None not in (rev, topps, main):
-                        n += 1
-                        if abs(rev + topps - main) > TOL:
-                            fails.append(f"NA {v} {pk}: Net Revenue + Topps memo "
-                                         f"{(rev + topps) / 1e6:,.2f} != row 0 "
-                                         f"{main / 1e6:,.2f}")
-                # The buckets on screen sum to Total COGS (the BU_OMIT guard).
-                buckets = [r for r in rows if r.section == "Cost of Goods Sold"
-                           and r.label != "Total COGS"]
-                total = _bu_row(rows, "Total COGS")
-                t = cube.value(v, total, pk)
+                # The bucket % rows split their COGS $ row exactly (BU_OMIT guard).
+                c, d = cube.value(v, cogs, pk), cube.value(v, den, pk)
                 parts = [cube.value(v, r, pk) for r in buckets]
-                if t is not None and None not in parts:
+                if c is not None and d and None not in parts:
                     n += 1
-                    if abs(sum(parts) - t) > 1e-9:
-                        fails.append(f"{name} {v} {pk}: COGS % rows sum "
-                                     f"{sum(parts):.6f} != Total COGS {t:.6f}")
+                    if abs(sum(parts) - c / d) > 1e-9:
+                        fails.append(f"{name} {v} {pk}: COGS % rows sum {sum(parts):.6f} "
+                                     f"!= {cogs.label} / {den.label} {c / d:.6f}")
+    return n, fails
+
+
+#: North America = NASE + GCP on every $ line: (section, NASE, GCP, total).
+_NA_SPLITS: tuple[tuple[str, str, str, str], ...] = (
+    ("Revenue", bu.NA_NASE_NET_SALES, bu.NA_GCP_REV, bu.NA_NET_SALES),
+    ("Cost of Goods Sold", bu.NA_NASE_COGS, bu.NA_GCP, bu.NA_TOTAL_COGS),
+    ("Gross Margin", bu.NA_NASE_GP, bu.NA_GCP, bu.NA_GP),
+    ("Operating Expenses", bu.NA_NASE_SGA, bu.NA_GCP_SGA, "SG&A"),
+    ("EBITDA", bu.NA_NASE_EBITDA, bu.NA_GCP, "EBITDA"),
+)
+
+
+def check_na(cube: tx.Cube) -> tuple[int, list[str]]:
+    """The North America page's own arithmetic, every vintage x period."""
+    rows = bu.rows("na", cube)
+    get = lambda sec, lbl: _bu_row(rows, lbl, sec)  # noqa: E731
+    gcp_mkt = bu._expr(queries.BU_NA_GCP)
+    fails: list[str] = []
+    n = 0
+    for v in cube.vintages:
+        for pk in _keys(cube, v):
+            val = lambda r: cube.value(v, r, pk)  # noqa: E731
+            for sec, nase, gcp, total in _NA_SPLITS:
+                a, b, t = val(get(sec, nase)), val(get(sec, gcp)), val(get(sec, total))
+                if None in (a, b, t):
+                    continue
+                n += 1
+                if abs(a + b - t) > TOL:
+                    fails.append(f"NA {v} {pk} {sec}: {nase} {a / 1e6:,.2f} + {gcp} "
+                                 f"{b / 1e6:,.2f} != {total} {t / 1e6:,.2f}")
+            gr, tp, ns = (val(get("Revenue", l)) for l in
+                          (bu.NA_GROSS_REV, bu.NA_TOPPS, bu.NA_NASE_NET_SALES))
+            if None not in (gr, tp, ns):
+                n += 1
+                if abs(gr + tp - ns) > TOL:
+                    fails.append(f"NA {v} {pk}: Gross Revenue + Topps != Net Sales (NASE)")
+            gp, pct, net = (val(get(s, l)) for s, l in (
+                ("Gross Margin", bu.NA_GP), ("Gross Margin", bu.NA_GP_PCT),
+                ("Revenue", bu.NA_NET_SALES)))
+            if None not in (gp, pct) and net:
+                n += 1
+                if abs(pct - gp / net) > PCT_TOL:
+                    fails.append(f"NA {v} {pk}: Gross Profit % {pct} != GP / Net Sales")
+            # One Marketing line is only honest while GCP carries no Marketing.
+            mkt = cube.segs.get((v, "mkt", pk))
+            if mkt is not None:
+                n += 1
+                if abs(gcp_mkt(mkt)) > TOL:
+                    fails.append(f"NA {v} {pk}: GCP Marketing {gcp_mkt(mkt) / 1e6:,.2f}M "
+                                 "-- the page needs a GCP Marketing line")
+    return n, fails
+
+
+#: James Dillon's "2027 Budget | P&L: North America Excl GCP" slide, its 2026
+#: columns = Sep 2026 FC: Q1, Q2, Q3, Q4, FY. $M or whole %, as printed. The
+#: NASE rows must round to these; a SEP26RF restatement fails here loudly.
+SLIDE_VINTAGE = "Sep 2026 FC"
+SLIDE_NA: dict[tuple[str, str], tuple[int, ...]] = {
+    ("Revenue", bu.NA_GROSS_REV):                (669, 1314, 1132, 1124, 4239),
+    ("Revenue", bu.NA_NASE_NET_SALES):           (652, 1289, 1077, 1071, 4089),
+    ("Cost of Goods Sold", bu.NA_NASE_COGS):     (296, 544, 463, 522, 1825),
+    ("Cost of Goods Sold", "Standard Manufacturing"): (13, 10, 11, 15, 12),
+    ("Cost of Goods Sold", "Royalties"):         (20, 23, 22, 22, 22),
+    ("Cost of Goods Sold", "MG Shortfalls"):     (0, 0, 0, 0, 0),
+    ("Cost of Goods Sold", "Autos & Relics"):    (8, 7, 7, 8, 7),
+    ("Cost of Goods Sold", "Other"):             (5, 2, 3, 3, 3),
+    ("Gross Margin", bu.NA_NASE_GP):             (373, 769, 669, 602, 2414),
+    ("Operating Expenses", "Marketing"):         (11, 19, 34, 24, 88),
+    ("Operating Expenses", bu.NA_NASE_SGA):      (73, 87, 71, 83, 315),
+    ("EBITDA", bu.NA_NASE_EBITDA):               (289, 664, 564, 495, 2012),
+    ("EBITDA", bu.NA_NASE_MARGIN):               (44, 51, 52, 46, 49),
+}
+#: "SG&A as a % of Net Sales": the ratio row right under SG&A (NASE).
+SLIDE_NA_SGA_PCT = (11, 7, 7, 8, 8)
+
+
+def _half_up(x: float) -> int:
+    return int(math.floor(x + 0.5))
+
+
+def check_slide(cube: tx.Cube) -> tuple[int, list[str]]:
+    v = SLIDE_VINTAGE
+    if v not in cube.vintages:
+        return 0, [f"{v} not in the cube"]
+    rows = bu.rows("na", cube)
+    pks = ("Q1", "Q2", "Q3", "Q4", tx.ANNUAL)
+    sga = _bu_row(rows, bu.NA_NASE_SGA)
+    sga_pct = rows[sga.idx + 1]
+    assert sga_pct.is_pct, "the row under SG&A (NASE) must be its % of Net Sales"
+    checks = [(_bu_row(rows, lbl, sec), want) for (sec, lbl), want in SLIDE_NA.items()]
+    checks.append((sga_pct, SLIDE_NA_SGA_PCT))
+    fails: list[str] = []
+    n = 0
+    for row, want in checks:
+        for pk, w in zip(pks, want):
+            n += 1
+            x = cube.value(v, row, pk)
+            got = None if x is None else _half_up(x * 100 if row.is_pct else x / 1e6)
+            if got != w:
+                fails.append(f"{row.section}/{row.label} {pk}: page {got} != slide {w}")
     return n, fails
 
 
@@ -327,6 +434,10 @@ def main() -> None:
     suites.append(("CARVE-OUTS", f"{n:,} cells", f))
     n, f = check_ties(cube)
     suites.append(("BU TIES", f"{n:,} BU-to-consolidated cells", f))
+    n, f = check_na(cube)
+    suites.append(("NA = NASE+GCP", f"{n:,} North America cells", f))
+    n, f = check_slide(cube)
+    suites.append(("NA SLIDE", f"{n} cells vs James's NA Excl GCP slide", f))
     n, f = check_omit(cube)
     suites.append(("BU_OMIT", f"{n} omitted buckets", f))
     suites.append(("ONE ENTITY", "max_n_entity / max_n_icp <= 1", check_guards(df)))
