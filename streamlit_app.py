@@ -48,12 +48,9 @@ def _tab(text: str) -> str:
     return f"{DRAFT_LABEL.strip('()')} — {text}" if DRAFT_LABEL else text
 
 
-st.set_page_config(
-    page_title=_tab("Drillable P&L — Collectibles Forecast"),
-    page_icon="\U0001F4C8",
-    layout="wide",
-)
-
+# st.set_page_config runs in the __main__ block at the bottom, so importing this
+# file (financial_app.py does) renders nothing. None of these modules calls st.*
+# at import -- only the @st.cache_* / @st.fragment decorators.
 import agent_chat                # noqa: E402
 import bu                        # noqa: E402
 import charts                    # noqa: E402
@@ -79,8 +76,6 @@ DRAFT_NOTICE: str | None = "Numbers under validation. Not final."
 #: page that does not render it runs.
 GRAIN_SHADOW = "_grain"
 
-style.inject()
-
 
 def _shell_header(fiscal_year: str | None) -> str:
     fy = f"FY {fiscal_year} &nbsp;·&nbsp; " if fiscal_year else ""
@@ -98,107 +93,116 @@ def _shell_header(fiscal_year: str | None) -> str:
     )
 
 
-# Filled again once the forecast is chosen: the year is the selected
-# forecast's, not a constant.
-header = st.empty()
-header.markdown(_shell_header(None), unsafe_allow_html=True)
-# A BU page puts its breadcrumb and BU links here, above the Forecast / vs.
-# pair the shell renders next.
-crumbs = st.container()
+def render_shell() -> None:
+    """The shell: styles, header, the data load, the sidebar and the Forecast /
+    vs. pair. Sets the module globals the page functions read. Called from the
+    __main__ block below and by financial_app.py; nothing here runs on import.
+    """
+    global header, crumbs, master, pulled_at, cube, show_retired, forecast, comp
 
-# ---------------------------------------------------------------------------
-# Load
-# ---------------------------------------------------------------------------
-# load_master() lets its exceptions out on purpose (see data.py): a cached
-# loader that returned an empty frame would memoize that empty for two hours
-# and render a convincing but false "no data" dashboard.
-try:
-    master, pulled_at = data.load_master()
-except Exception as exc:  # noqa: BLE001 -- surface anything, then offer a retry
-    st.error(f"Could not load the P&L cube from Snowflake.\n\n`{exc}`")
-    if st.button("Retry", type="primary"):
-        data.load_master.clear()
-        st.rerun()
-    st.stop()
+    style.inject()
 
-cube = tx.build_cube(master)
+    # Filled again once the forecast is chosen: the year is the selected
+    # forecast's, not a constant.
+    header = st.empty()
+    header.markdown(_shell_header(None), unsafe_allow_html=True)
+    # A BU page puts its breadcrumb and BU links here, above the Forecast / vs.
+    # pair the shell renders next.
+    crumbs = st.container()
 
-if not cube.vintages:
-    st.warning("The query returned no vintages. Nothing to show.")
-    st.stop()
+    # -----------------------------------------------------------------------
+    # Load
+    # -----------------------------------------------------------------------
+    # load_master() lets its exceptions out on purpose (see data.py): a cached
+    # loader that returned an empty frame would memoize that empty for two
+    # hours and render a convincing but false "no data" dashboard.
+    try:
+        master, pulled_at = data.load_master()
+    except Exception as exc:  # noqa: BLE001 -- surface anything, then offer a retry
+        st.error(f"Could not load the P&L cube from Snowflake.\n\n`{exc}`")
+        if st.button("Retry", type="primary"):
+            data.load_master.clear()
+            st.rerun()
+        st.stop()
 
-# ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.caption(f"Data pulled {pulled_at:%Y-%m-%d %H:%M} UTC · {len(master):,} rows")
-    st.caption(f"{len(cube.vintages)} vintages: "
-               f"{', '.join(tx.vintage_label(v) for v in cube.vintages)}")
-    # Once a year's actuals are final its forecasts and budget are history, so
-    # they are hidden by default (Cube.is_retired). Offered only when there is
-    # something to bring back.
-    retired = [v for v in cube.vintages if cube.is_retired(v)]
-    show_retired = False
-    if retired:
-        closed = ", ".join(sorted({cube.fiscal_year[v] for v in retired}))
-        show_retired = st.checkbox(
-            "Show prior-year forecasts & budgets",
-            key="show_retired",
-            help=f"Forecasts and budgets for years whose actuals are final "
-                 f"({closed}) are hidden by default. "
-                 f"{len(retired)} hidden: "
-                 f"{', '.join(tx.vintage_label(v) for v in retired)}.",
+    cube = tx.build_cube(master)
+
+    if not cube.vintages:
+        st.warning("The query returned no vintages. Nothing to show.")
+        st.stop()
+
+    # -----------------------------------------------------------------------
+    # Sidebar
+    # -----------------------------------------------------------------------
+    with st.sidebar:
+        st.caption(f"Data pulled {pulled_at:%Y-%m-%d %H:%M} UTC · {len(master):,} rows")
+        st.caption(f"{len(cube.vintages)} vintages: "
+                   f"{', '.join(tx.vintage_label(v) for v in cube.vintages)}")
+        # Once a year's actuals are final its forecasts and budget are history,
+        # so they are hidden by default (Cube.is_retired). Offered only when
+        # there is something to bring back.
+        retired = [v for v in cube.vintages if cube.is_retired(v)]
+        show_retired = False
+        if retired:
+            closed = ", ".join(sorted({cube.fiscal_year[v] for v in retired}))
+            show_retired = st.checkbox(
+                "Show prior-year forecasts & budgets",
+                key="show_retired",
+                help=f"Forecasts and budgets for years whose actuals are final "
+                     f"({closed}) are hidden by default. "
+                     f"{len(retired)} hidden: "
+                     f"{', '.join(tx.vintage_label(v) for v in retired)}.",
+            )
+
+        # Here in the shell, not on a page, so the conversation survives a
+        # switch to a BU page and back. A fragment: asking reruns only the chat.
+        agent_chat.render()
+
+    # -----------------------------------------------------------------------
+    # Forecast and comparison -- one pair for every page and tab
+    # -----------------------------------------------------------------------
+    # Above the pages so the statement's change column, the Trends bridge and
+    # every BU page always compare the same two vintages.
+    fc_opts = tx.forecast_options(cube, show_retired)
+    # Also covers a selection that has just stopped being offered (the
+    # prior-year toggle switched off under it) -- a session_state value outside
+    # the options would otherwise make the selectbox raise.
+    if st.session_state.get("fc_sel") not in fc_opts:
+        st.session_state.fc_sel = fc_opts[0]
+
+    c1, c2, _ = st.columns([1.3, 1.6, 3.1], vertical_alignment="bottom")
+
+    with c1:
+        forecast = st.selectbox(
+            "Forecast", fc_opts, key="fc_sel", format_func=tx.vintage_label
         )
 
-    # Here in the shell, not on a page, so the conversation survives a switch
-    # to a BU page and back. A fragment: asking reruns only the chat.
-    agent_chat.render()
+    header.markdown(_shell_header(cube.year(forecast)), unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# Forecast and comparison -- one pair for every page and tab
-# ---------------------------------------------------------------------------
-# Above the pages so the statement's change column, the Trends bridge and every
-# BU page always compare the same two vintages.
-fc_opts = tx.forecast_options(cube, show_retired)
-# Also covers a selection that has just stopped being offered (the prior-year
-# toggle switched off under it) -- a session_state value outside the options
-# would otherwise make the selectbox raise.
-if st.session_state.get("fc_sel") not in fc_opts:
-    st.session_state.fc_sel = fc_opts[0]
+    comp_opts = tx.comp_options(cube, forecast, show_retired)
+    if "comp_sel" not in st.session_state:
+        # First load only: default to the forecast immediately before the
+        # selected one, which is the deck's opening pairing (Jul. FC vs Jun. FC).
+        prior = [o for o in comp_opts if cube.scenario_label.get(o) == "FORECAST"]
+        st.session_state["comp_sel"] = prior[0] if prior else ""
+    else:
+        # Thereafter the deck's refreshCompOpts() rule applies: a comparison
+        # that collides with the newly chosen forecast resets to None. It resets
+        # rather than sliding to a neighbouring vintage -- quietly comparing
+        # against a different vintage than the user picked would be worse than
+        # clearing it. Rewriting the key before the widget renders is also what
+        # keeps Streamlit from raising on a value no longer in the option list.
+        st.session_state["comp_sel"] = tx.resolve_comp(
+            st.session_state["comp_sel"], forecast, comp_opts
+        )
 
-c1, c2, _ = st.columns([1.3, 1.6, 3.1], vertical_alignment="bottom")
-
-with c1:
-    forecast = st.selectbox(
-        "Forecast", fc_opts, key="fc_sel", format_func=tx.vintage_label
-    )
-
-header.markdown(_shell_header(cube.year(forecast)), unsafe_allow_html=True)
-
-comp_opts = tx.comp_options(cube, forecast, show_retired)
-if "comp_sel" not in st.session_state:
-    # First load only: default to the forecast immediately before the selected
-    # one, which is the deck's opening pairing (Jul. FC vs Jun. FC).
-    prior = [o for o in comp_opts if cube.scenario_label.get(o) == "FORECAST"]
-    st.session_state["comp_sel"] = prior[0] if prior else ""
-else:
-    # Thereafter the deck's refreshCompOpts() rule applies: a comparison that
-    # collides with the newly chosen forecast resets to None. It resets rather
-    # than sliding to a neighbouring vintage -- quietly comparing against a
-    # different vintage than the user picked would be worse than clearing it.
-    # Rewriting the key before the widget renders is also what keeps Streamlit
-    # from raising on a value no longer in the option list.
-    st.session_state["comp_sel"] = tx.resolve_comp(
-        st.session_state["comp_sel"], forecast, comp_opts
-    )
-
-with c2:
-    comp = st.selectbox(
-        "vs.",
-        comp_opts,
-        key="comp_sel",
-        format_func=lambda k: NONE_LABEL if k == "" else tx.vintage_label(k),
-    )
+    with c2:
+        comp = st.selectbox(
+            "vs.",
+            comp_opts,
+            key="comp_sel",
+            format_func=lambda k: NONE_LABEL if k == "" else tx.vintage_label(k),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -488,4 +492,11 @@ BU_PAGES: dict[str, st.Page] = {
     for key in bu.BU_KEYS
 } if bu.AVAILABLE else {}
 
-st.navigation([CONSOLIDATED, *BU_PAGES.values()], position="hidden").run()
+if __name__ == "__main__":
+    st.set_page_config(
+        page_title=_tab("Drillable P&L — Collectibles Forecast"),
+        page_icon="\U0001F4C8",
+        layout="wide",
+    )
+    render_shell()
+    st.navigation([CONSOLIDATED, *BU_PAGES.values()], position="hidden").run()

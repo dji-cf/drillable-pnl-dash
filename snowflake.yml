@@ -88,3 +88,36 @@ entities:
       - agent_chat.py                 # sidebar Cortex Agent chat
       - pyproject.toml                # container runtime reads this for deps
       - .streamlit/config.toml        # SiS honors the [theme] subset
+  # A SEPARATE app (Dan Chen, 2026-10-14): Income Statement reuses the
+  # drillable P&L pages via financial_app.py; the other top tabs are shells.
+  # Same stage, runtime and grants as drillable_pnl_dash above, which it
+  # leaves untouched.
+  collectibles_financial_dash:
+    type: streamlit
+    identifier:
+      name: COLLECTIBLES_FINANCIAL_DASH
+      database: ORACLE_DATA_PROD
+      schema: SANDBOX
+    title: "(DRAFT) Collectibles Financial Dashboard"
+    stage: streamlit_stage
+    runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    external_access_integrations:
+      - pypi_access_integration
+    query_warehouse: ANALYTICS_WAREHOUSE
+    main_file: financial_app.py
+    artifacts:
+      - financial_app.py
+      - streamlit_app.py
+      - queries.py
+      - data.py
+      - transforms.py
+      - table.py
+      - interactive.py
+      - style.py
+      - charts.py
+      - export.py
+      - bu.py
+      - agent_chat.py
+      - pyproject.toml
+      - .streamlit/config.toml
