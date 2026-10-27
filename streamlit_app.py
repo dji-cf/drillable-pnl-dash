@@ -113,6 +113,11 @@ if not cube.vintages:
 # Sidebar
 # ---------------------------------------------------------------------------
 with st.sidebar:
+    # Here in the shell, not on a page, so the conversation survives a switch
+    # to a BU page and back. A fragment: asking reruns only the chat.
+    agent_chat.render()
+
+    st.divider()
     st.caption(f"Data pulled {pulled_at:%Y-%m-%d %H:%M} UTC · {len(master):,} rows")
     st.caption(f"{len(cube.vintages)} vintages: "
                f"{', '.join(tx.vintage_label(v) for v in cube.vintages)}")
@@ -131,10 +136,6 @@ with st.sidebar:
                  f"{len(retired)} hidden: "
                  f"{', '.join(tx.vintage_label(v) for v in retired)}.",
         )
-
-    # Here in the shell, not on a page, so the conversation survives a switch
-    # to a BU page and back. A fragment: asking reruns only the chat.
-    agent_chat.render()
 
 # ---------------------------------------------------------------------------
 # Forecast and comparison -- one pair for every page and tab

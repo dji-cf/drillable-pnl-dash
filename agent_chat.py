@@ -8,10 +8,11 @@ arrives whole after the agent finishes, which can take tens of seconds.
 ACCESS. Deployed, this runs as the app owner, POWER_ANALYST_ORACLE_PROD, with no
 secondary roles. Calling an agent needs SNOWFLAKE.CORTEX_AGENT_USER (or
 CORTEX_USER) on that role, plus USAGE on the agent and on whatever its tools
-read. The role owns FC_FORECAST_ANALYST and its three semantic views; whether it
-holds CORTEX_AGENT_USER was NOT confirmed when this was written. If it does not,
-the call fails as "Unknown user-defined function", and friendly_error() turns
-that into the grant to ask for.
+read. The role holds both database roles (confirmed 2026-10-26 via SHOW GRANTS)
+and owns FC_FORECAST_ANALYST and its three semantic views. An "Unknown
+user-defined function" error therefore points at the session (e.g. a restricted
+scope hiding SNOWFLAKE.CORTEX) rather than a missing grant; friendly_error()
+says so.
 
 CONVERSATION. Stateless: each question re-sends the last few answered
 question/answer pairs as text (no server-side threads). Tables and SQL from
@@ -98,9 +99,10 @@ def friendly_error(exc: Exception) -> str:
     msg = str(exc)
     if "DATA_AGENT_RUN" in msg and "Unknown" in msg:
         return (
-            "This app's role is not allowed to run Cortex Agents yet. An admin "
-            "needs to run:\n\n"
-            f"`GRANT DATABASE ROLE SNOWFLAKE.CORTEX_AGENT_USER TO ROLE {OWNER_ROLE};`"
+            "This session cannot see SNOWFLAKE.CORTEX.DATA_AGENT_RUN. "
+            f"{OWNER_ROLE} holds SNOWFLAKE.CORTEX_AGENT_USER, so check that the "
+            "app runs as that role and that no restricted session scope is "
+            f"hiding SNOWFLAKE.CORTEX functions.\n\n`{msg}`"
         )
     if "does not exist or not authorized" in msg:
         return (
@@ -237,7 +239,12 @@ def _clear(fqn: str) -> None:
 @st.fragment
 def _chat() -> None:
     """The chat body. A fragment, so a question reruns only this, not the page."""
-    name = st.selectbox("Agent", list(AGENTS), key="agent_chat_agent")
+    # A picker only when there is something to pick.
+    if len(AGENTS) > 1:
+        name = st.selectbox("Agent", list(AGENTS), key="agent_chat_agent")
+    else:
+        name = next(iter(AGENTS))
+        st.caption(f"Chatting with **{name}**")
     fqn = AGENTS[name]
     turns = st.session_state.setdefault(_STATE, {}).setdefault(fqn, [])
 
@@ -269,6 +276,5 @@ def _chat() -> None:
 
 def render() -> None:
     """The chat section, for the entrypoint's sidebar."""
-    st.divider()
     st.subheader("Ask the data", anchor=False)
     _chat()
