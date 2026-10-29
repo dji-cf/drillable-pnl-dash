@@ -86,8 +86,8 @@ def main() -> None:
 
     msg = ac.friendly_error(Exception(
         "SQL compilation error:\nUnknown user-defined function SNOWFLAKE.CORTEX.DATA_AGENT_RUN."))
-    results.append(check("missing-grant error names the grant",
-                         "CORTEX_AGENT_USER" in msg and ac.OWNER_ROLE in msg, msg))
+    results.append(check("unknown-function error names role and keeps detail",
+                         ac.OWNER_ROLE in msg and "Unknown user-defined" in msg, msg))
 
     turns = [
         {"role": "user", "text": "q1"}, {"role": "assistant", "text": "a1", "error": None},

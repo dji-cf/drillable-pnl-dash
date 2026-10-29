@@ -392,6 +392,10 @@ class Row:
     #: An increase is UNFAVOURABLE (a cost line), so the change cell's green and
     #: red swap. False on all 26 consolidated rows; the BU pages set it.
     cost: bool = False
+    #: The denominator's terms when they differ from the numerator's (``expr``).
+    #: None on all 26 consolidated rows; the North America BU page sets it, as
+    #: its % rows are over Net Sales (incl. Topps eliminations).
+    den_expr: Callable[[Segs], float] | None = None
 
     @property
     def gaps(self) -> tuple[str, ...]:
@@ -700,7 +704,7 @@ class Cube:
         den_segs = self._segs(vintage, row.den_line, period_key)
         if den_segs is None:
             return None
-        den = row.expr(den_segs)
+        den = (row.den_expr or row.expr)(den_segs)
         return None if not den else num / den
 
     # -- which vintages the page offers ----------------------------------
