@@ -87,6 +87,12 @@ def main() -> None:
     print("Income Statement inner tabs:", inner)
     if inner != inner_labels:
         problems.append(f"consolidated page tabs missing: {inner}")
+    # One title only: render_shell(title=None) drops the old app's <h1>.
+    income_md = " ".join(m.value for m in by_label["Income Statement"].markdown)
+    old_title = "Collectibles Forecast Dashboard" in income_md
+    print(f"Income Statement has old title: {old_title}")
+    if old_title:
+        problems.append("Income Statement tab still shows 'Collectibles Forecast Dashboard'")
 
     for key in bu.BU_KEYS if bu.AVAILABLE else []:
         at._page_hash = calc_hash(bu.URL_PATHS[key])
@@ -95,28 +101,50 @@ def main() -> None:
         print(f"BU page {key}: {err or 'ok'}")
         if err:
             problems.append(f"BU {key}: {err}")
+        md = " ".join(m.value for m in at.markdown)
+        has_new = "<h1>" in md and "Collectibles Financial Dashboard</h1>" in md
+        print(f"BU page {key} header 'Collectibles Financial Dashboard': {has_new}")
+        if not has_new or "Collectibles Forecast Dashboard" in md:
+            problems.append(f"BU {key}: header is not 'Collectibles Financial Dashboard'")
 
-    # The shell renders inside pages here, not in the entrypoint: does the
-    # Forecast picked on the home page survive the drill to a BU page and back?
+    # The shell renders inside pages here, not in the entrypoint, so the
+    # Forecast / vs. widget keys drop on a page switch; FC_SHADOW / COMP_SHADOW
+    # in streamlit_app.py put them back. The pick must survive the drill.
     if bu.AVAILABLE:
         at._page_hash = ""
         at.run()
         pick = at.selectbox(key="fc_sel").options[1]
         at.selectbox(key="fc_sel").set_value(pick).run()
+        comp_pick = at.selectbox(key="comp_sel").value
         at._page_hash = calc_hash(bu.URL_PATHS[bu.BU_KEYS[0]])
         at.run()
-        on_bu = at.selectbox(key="fc_sel").value
+        on_bu = (at.selectbox(key="fc_sel").value, at.selectbox(key="comp_sel").value)
         at._page_hash = ""
         at.run()
-        back = at.selectbox(key="fc_sel").value
-        print(f"forecast carry-over: picked {pick!r} -> BU {on_bu!r} -> home {back!r}")
-        # KNOWN GAP, reported not failed: Streamlit scopes a widget to the page
-        # that renders it, and here the Forecast / vs. pair renders inside each
-        # page (render_shell is called by the page, not the entrypoint), so the
-        # pick resets to the default on a drill. streamlit_app.py renders the
-        # shell in its entrypoint and keeps it (apptest_smoke "carry-over ok").
-        if not (on_bu == back == pick):
-            print("KNOWN GAP: Forecast selection does not survive the BU drill")
+        back = (at.selectbox(key="fc_sel").value, at.selectbox(key="comp_sel").value)
+        print(f"forecast carry-over: picked {(pick, comp_pick)!r} -> BU {on_bu!r} "
+              f"-> home {back!r}")
+        if not (on_bu == back == (pick, comp_pick)):
+            problems.append("Forecast / vs. selection does not survive the BU drill")
+
+    # Two sessions, two picks: each keeps its own. AppTest runs sessions one
+    # after another in this thread, so this shows isolation of state, not a
+    # true race; the race is closed by financial_app.py loading a fresh
+    # streamlit_app per run, never one shared module (checked below).
+    a = AppTest.from_file(str(APP), default_timeout=180).run()
+    b = AppTest.from_file(str(APP), default_timeout=180).run()
+    opts = a.selectbox(key="fc_sel").options
+    a.selectbox(key="fc_sel").set_value(opts[1]).run()
+    b.selectbox(key="fc_sel").set_value(opts[2]).run()
+    a.run()
+    got = (a.selectbox(key="fc_sel").value, b.selectbox(key="fc_sel").value)
+    print(f"two sessions: A={got[0]!r} B={got[1]!r} (picked {opts[1]!r}, {opts[2]!r})")
+    if got != (opts[1], opts[2]):
+        problems.append(f"two sessions do not keep separate picks: {got}")
+    shared = [m for m in ("streamlit_app", "streamlit_app_fin") if m in sys.modules]
+    print(f"shared streamlit_app module in sys.modules: {shared or 'none'}")
+    if shared:
+        problems.append(f"financial_app.py left a shared module: {shared}")
 
     if problems:
         print("\nPROBLEMS:", *problems, sep="\n  ")

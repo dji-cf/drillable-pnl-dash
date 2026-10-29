@@ -13,10 +13,22 @@ Local: streamlit run financial_app.py   (same .venv as streamlit_app.py)
 """
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import streamlit as st
 
 import bu
-import streamlit_app as pnl
+
+# A fresh copy of streamlit_app for every script run, NOT a plain import: an
+# imported module is one object shared by every browser session on the server,
+# and render_shell() writes the globals its pages read (cube, forecast, comp,
+# ...), so two users at the same time would read each other's picks. Not named
+# "__main__" (its own entrypoint block must not run) and not put in sys.modules.
+_spec = importlib.util.spec_from_file_location(
+    "streamlit_app_fin", Path(__file__).with_name("streamlit_app.py"))
+pnl = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(pnl)
 
 APP_TITLE = "Collectibles Financial Dashboard"
 TABS = ["Income Statement", "Balance Sheet", "Cash Flow", "SG&A"]
@@ -38,7 +50,7 @@ def home() -> None:
     income, balance, cash, sga = st.tabs(TABS)
 
     with income:
-        pnl.render_shell()
+        pnl.render_shell(title=None)        # the st.title above is the one title
         pnl.consolidated_page()
 
     with balance:
@@ -58,7 +70,7 @@ def home() -> None:
 
 def _bu_wrapper(key: str):
     def page() -> None:
-        pnl.render_shell()
+        pnl.render_shell(title=APP_TITLE)   # the header's tag adds "(DRAFT)"
         pnl.bu_page(key)
     page.__name__ = f"{key}_page"   # st.Page infers names from the callable
     return page

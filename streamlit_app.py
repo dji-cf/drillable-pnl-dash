@@ -75,28 +75,56 @@ DRAFT_NOTICE: str | None = "Numbers under validation. Not final."
 #: on one page is the View on the next. A widget's own key is dropped when a
 #: page that does not render it runs.
 GRAIN_SHADOW = "_grain"
+#: The same for the Forecast / vs. pair. Needed where the pair renders inside a
+#: page (financial_app.py), not in the entrypoint: a page switch drops the
+#: widget keys "fc_sel" / "comp_sel", and these restore them.
+FC_SHADOW = "_fc"
+COMP_SHADOW = "_comp"
+
+SHELL_TITLE = "Collectibles Forecast Dashboard"
 
 
-def _shell_header(fiscal_year: str | None) -> str:
+def _shell_header(fiscal_year: str | None, title: str | None = SHELL_TITLE) -> str:
+    """title=None drops the <h1> (the caller shows its own title above)."""
     fy = f"FY {fiscal_year} &nbsp;·&nbsp; " if fiscal_year else ""
     # Leads the title now, so its margin goes on the right instead of the left.
     tag = (f'<span class="draft" style="margin:0 14px 0 0">{DRAFT_LABEL}</span>'
            if DRAFT_LABEL else "")
     note = (f'<div class="draft-note">{DRAFT_NOTICE}</div>'
             if DRAFT_LABEL and DRAFT_NOTICE else "")
+    h1 = f"<h1>{tag}{title}</h1>" if title else ""
     return (
         '<div class="shell-header">'
-        f"<h1>{tag}Collectibles Forecast Dashboard</h1>"
+        f"{h1}"
         f"{note}"
         f'<div class="sub">{fy}Figures in $M</div>'
         "</div>"
     )
 
 
-def render_shell() -> None:
+def _keep_shadow(key: str, shadow: str) -> None:
+    """on_change: the widget's new value becomes the shadow value."""
+    st.session_state[shadow] = st.session_state.get(key)
+
+
+def _restore(key: str, shadow: str, opts: Sequence[str]) -> None:
+    """Seed a widget key from its shadow, as _grain_control does for the View.
+
+    Every run, not only when the key is missing: after a page switch the key
+    still holds the old page's value, but a widget new to this page ignores it
+    unless it is written again before the widget renders.
+    """
+    if shadow not in st.session_state:
+        st.session_state[shadow] = st.session_state.get(key)
+    if st.session_state[shadow] in opts:
+        st.session_state[key] = st.session_state[shadow]
+
+
+def render_shell(title: str | None = SHELL_TITLE) -> None:
     """The shell: styles, header, the data load, the sidebar and the Forecast /
     vs. pair. Sets the module globals the page functions read. Called from the
     __main__ block below and by financial_app.py; nothing here runs on import.
+    title: the header's <h1> text; None shows no <h1>.
     """
     global header, crumbs, master, pulled_at, cube, show_retired, forecast, comp
 
@@ -105,7 +133,7 @@ def render_shell() -> None:
     # Filled again once the forecast is chosen: the year is the selected
     # forecast's, not a constant.
     header = st.empty()
-    header.markdown(_shell_header(None), unsafe_allow_html=True)
+    header.markdown(_shell_header(None, title), unsafe_allow_html=True)
     # A BU page puts its breadcrumb and BU links here, above the Forecast / vs.
     # pair the shell renders next.
     crumbs = st.container()
@@ -165,6 +193,7 @@ def render_shell() -> None:
     # Above the pages so the statement's change column, the Trends bridge and
     # every BU page always compare the same two vintages.
     fc_opts = tx.forecast_options(cube, show_retired)
+    _restore("fc_sel", FC_SHADOW, fc_opts)
     # Also covers a selection that has just stopped being offered (the
     # prior-year toggle switched off under it) -- a session_state value outside
     # the options would otherwise make the selectbox raise.
@@ -175,12 +204,15 @@ def render_shell() -> None:
 
     with c1:
         forecast = st.selectbox(
-            "Forecast", fc_opts, key="fc_sel", format_func=tx.vintage_label
+            "Forecast", fc_opts, key="fc_sel", format_func=tx.vintage_label,
+            on_change=_keep_shadow, args=("fc_sel", FC_SHADOW),
         )
+    st.session_state[FC_SHADOW] = forecast
 
-    header.markdown(_shell_header(cube.year(forecast)), unsafe_allow_html=True)
+    header.markdown(_shell_header(cube.year(forecast), title), unsafe_allow_html=True)
 
     comp_opts = tx.comp_options(cube, forecast, show_retired)
+    _restore("comp_sel", COMP_SHADOW, comp_opts)
     if "comp_sel" not in st.session_state:
         # First load only: default to the forecast immediately before the
         # selected one, which is the deck's opening pairing (Jul. FC vs Jun. FC).
@@ -196,6 +228,7 @@ def render_shell() -> None:
         st.session_state["comp_sel"] = tx.resolve_comp(
             st.session_state["comp_sel"], forecast, comp_opts
         )
+        st.session_state[COMP_SHADOW] = st.session_state["comp_sel"]
 
     with c2:
         comp = st.selectbox(
@@ -203,7 +236,9 @@ def render_shell() -> None:
             comp_opts,
             key="comp_sel",
             format_func=lambda k: NONE_LABEL if k == "" else tx.vintage_label(k),
+            on_change=_keep_shadow, args=("comp_sel", COMP_SHADOW),
         )
+    st.session_state[COMP_SHADOW] = comp
 
 
 # ---------------------------------------------------------------------------
