@@ -170,6 +170,9 @@ _FORECAST_ASOF = """
 # screen -- partial-year actuals and "retired" forecasts/budgets are not -- is
 # decided in transforms (Cube.visible), from the data.
 FIRST_FISCAL_YEAR = "FY25"
+# FY25 forecasts (OCT25RF/NOV25RF/DEC25RF) are removed, not fixed: James
+# 2026-10-20, Megan 2026-10-23, Maya 2026-11-03 (A11). FY25 Actuals stay.
+FIRST_FORECAST_FISCAL_YEAR = "FY26"
 
 _VINTAGE_KEY = """
       CASE
@@ -181,7 +184,7 @@ _VINTAGE_KEY = """
 
 _VINTAGE_FILTER = f"""
          (SCENARIO_LABEL IN ('ACTUAL', 'BUDGET') AND FISCAL_YEAR >= '{FIRST_FISCAL_YEAR}')
-      OR (SCENARIO_LABEL = 'FORECAST' AND FISCAL_YEAR >= '{FIRST_FISCAL_YEAR}'
+      OR (SCENARIO_LABEL = 'FORECAST' AND FISCAL_YEAR >= '{FIRST_FORECAST_FISCAL_YEAR}'
           AND FISCAL_YEAR = 'FY' || TO_CHAR(FORECAST_ASOF_DATE, 'YY'))"""
 
 # ---------------------------------------------------------------------------
