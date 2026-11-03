@@ -15,3 +15,67 @@ Checks run:
 - grep "Fanatics Collect" (outside output/bundle/): no user-facing app string is left. Remaining hits: code comments (`queries.py:58`), the dev script `tools/gap_analysis.py:222`, the validator's load-time rename, the reference deck JSONs (the deck's own printed label), ISSUES.md / audit doc, and `master_query.sql` (a standalone SQL reference that no .py file loads).
 
 Not run: streamlit, the Snowflake-backed validators (validate_vs_deck, validate_bu, smoke_render), and tools/test_compensation_flag.py (the sandbox did not allow it).
+
+## Budget double-count fix (updated 2026-11-03)
+
+**Who / when:** Maya said yes on 2026-11-03 08:46 (thread fcst-ui-audit: fix it now, and drop the fake "2028 Budget") and at 08:47 (thread fcst-ui-fixes: add the fix to this branch, do not push yet). The cause is in the "Budget double-count check" part of `git show coco/fcst-ui-audit:docs/fleet/fcst-ui-audit.md` (commit 2849828).
+
+**Cause:** The STG raw CTE had no SCENARIO filter. The budget key is `'20'||SUBSTR(FISCAL_YEAR,3,2)||'B'` (`queries.py:177`), so the FY26 rows of `2027B-09.28` (a copy of SEP26RF) were added into "2026B" together with `Plan_2026`. Its FY28 rows made a "2028B" vintage.
+
+**Change:** `queries.py:490-494`, in the `STG_SQL` raw CTE WHERE:
+```sql
+    AND NOT (SCENARIO_LABEL = 'BUDGET' AND COALESCE(SCENARIO, '') LIKE '20__B-%'
+             AND FISCAL_YEAR <> 'FY' || SUBSTR(SCENARIO, 3, 2))
+```
+A `20YYB-...` budget keeps only its own year (FY`YY`). Other budget names (e.g. `Plan_2026`) are not matched and pass as before. No scenario names are hard-coded. This is the only code change after 37a0f5d (`git diff --stat 37a0f5d`: `queries.py | 5 +++++`).
+
+**Rows (read-only, query id 01c82a3d-031a-2f84-69de-0701a06aeb2f):**
+
+| SCENARIO | FISCAL_YEAR | Kept | Rows |
+| --- | --- | --- | --- |
+| 2027B-09.28 | FY26 | no | 40,971 |
+| 2027B-09.28 | FY27 | yes | 39,026 |
+| 2027B-09.28 | FY28 | no | 1,244 |
+| Plan_2026 | FY26 | yes | 18,615 |
+
+**Before / after ($M, FY total, all LOBs, same WHERE and rev / cogs / sga logic as `STG_SQL`; query id 01c82a3d-031a-364f-69de-0701a06b164f):**
+
+| Budget | Before revenue | Before EBITDA | After revenue | After EBITDA | Proof |
+| --- | --- | --- | --- | --- | --- |
+| 2026B (FY26) | 9,071.9 | 3,180.2 | **3,646.7** | **1,080.2** | Before = the audit figure. After = `9.2026 Collectibles Fcst Deck FHI.xlsx`, sheet "One-Pager", column "Budget": Revenue 3646.710224098943 / Adj. EBITDA 1080.1960405868285 (rows 9 and 12, read with openpyxl, read-only, in the self-check (updated 2026-11-03)) |
+| 2027B (FY27) | 6,272.6 | 2,138.0 | 6,272.6 | 2,138.0 | unchanged |
+| 2028B (FY28) | 58.4 | 25.0 | **no row** | **no row** | no "2028 Budget" label |
+
+SQL used (after = rows with `keep_new`; before = all rows):
+```sql
+WITH raw AS (
+  SELECT SCENARIO_LABEL, SCENARIO, FISCAL_YEAR, PERIOD_TYPE, LOB, ACCOUNT, COST_CENTER, AMOUNT,
+         NOT (SCENARIO_LABEL = 'BUDGET' AND COALESCE(SCENARIO, '') LIKE '20__B-%'
+              AND FISCAL_YEAR <> 'FY' || SUBSTR(SCENARIO, 3, 2)) AS keep_new
+  FROM ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_BY_LOB_STG
+  WHERE CHANNEL = 'Total Channel' AND PLAN_ELEMENT = 'Total_Budget'
+    AND VERSION = 'Final' AND CURRENCY = 'USD_Reporting' AND ENTITY = 'CO_31000'
+    AND ((LOB <> 'LB_392' AND INTERCOMPANY = 'Total Intercompany') OR (LOB = 'LB_392' AND INTERCOMPANY = 'ICP_32002'))
+    AND SCENARIO_LABEL = 'BUDGET' AND FISCAL_YEAR >= 'FY25' AND PERIOD_TYPE = 'YEAR'
+    AND LOB IN ('LB_301','LB_302','LB_303','LB_304','LB_305','LB_306','LB_307','LB_308','LB_392','LB_394','Total - Topps Eliminations')
+), by_lob AS (
+  SELECT keep_new, FISCAL_YEAR, LOB,
+    SUM(IFF(ACCOUNT IN ('ACX_Net Revenue','AC_40001'), AMOUNT, 0)) AS rev,
+    COALESCE(SUM(IFF(ACCOUNT = 'AC_50000' AND COST_CENTER = 'CC_10000', AMOUNT, NULL)),
+             SUM(IFF(ACCOUNT IN ('ACX_Manufacturing','ACX_Net Freight Expense','ACX_Royalties','ACX_MG Shortfall','ACX_Autos & Relics','ACX_Obsolescence','ACX_Compensation','ACX_Product Development') AND COST_CENTER = 'CC_10000', AMOUNT, NULL)), 0) AS cogs,
+    SUM(IFF(ACCOUNT = 'AC_50000' AND COST_CENTER = 'CC_30000', AMOUNT, 0)) AS sga
+  FROM raw GROUP BY 1,2,3
+), filt AS (
+  SELECT 'after' AS run, FISCAL_YEAR, LOB, rev, cogs, sga FROM (
+    SELECT FISCAL_YEAR, LOB, SUM(rev) rev, SUM(cogs) cogs, SUM(sga) sga FROM by_lob WHERE keep_new GROUP BY 1,2)
+  UNION ALL
+  SELECT 'before', FISCAL_YEAR, LOB, SUM(rev), SUM(cogs), SUM(sga) FROM by_lob GROUP BY 2,3
+)
+SELECT run, FISCAL_YEAR, ROUND(SUM(rev)/1e6,1) AS revenue_m, ROUND(SUM(rev-cogs-sga)/1e6,1) AS ebitda_m
+FROM filt GROUP BY 1,2 ORDER BY 1,2 LIMIT 50
+```
+The query uses the same total as the app: Total Revenue / Total EBITDA = the sum of all base LOB segments (`queries.STG_ROW_MAP[("EBITDA","Total EBITDA")]`). The Pisa and TCG carve-outs net to zero. I did not run the full generated `STG_SQL`. This query is a shorter copy of the same filter and sums. Its "before" result (9,071.9 / 3,180.2) is the same as the audit's number for the app (`git show coco/fcst-ui-audit:docs/fleet/fcst-ui-audit.md`, line 66), so the short query gives the same totals as the app. Self-check re-run (updated 2026-11-03): query id 01c82a3f-031a-2bcc-69de-0701a06acb0f gave FY26 3646.7 / 1080.2 and FY27 6272.6 / 2138, with no FY28 row.
+
+**No "2028B" in the app:** The vintage list comes only from the `vintage_key` values the SQL returns (`transforms.py:955` in `build_cube`). With no FY28 BUDGET rows left, `'20'||'28'||'B'` cannot be built. Forecast rows were already limited to their own year (`queries.py` `_VINTAGE_FILTER`). How to see it: the Forecast and "vs." dropdowns no longer offer "2028 Budget". "2026 Budget" FY Total Revenue reads $3,646.7M.
+
+**Tests:** `python3 -m py_compile queries.py` passes. `python3 tools/test_vintages.py` prints ALL VINTAGE CHECKS PASS (offline; this test does not use STG_SQL, so it does not cover the filter). The SQL above is the proof. I did not run streamlit.

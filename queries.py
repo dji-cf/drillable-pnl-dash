@@ -487,6 +487,11 @@ WITH raw AS (
     AND ENTITY = '{STG_ENTITY}'
     AND (   (LOB <> 'LB_392' AND INTERCOMPANY = '{STG_ICP_TOTAL}')
          OR (LOB =  'LB_392' AND INTERCOMPANY = '{STG_ICP_INTL_ELIMS}'))
+    -- A '20YYB-...' budget scenario carries other years too (2027B-09.28's
+    -- FY26 rows are a copy of SEP26RF, its FY28 rows are no budget): keep
+    -- only its own year, or they add into 'YYYYB' (Maya, 2026-11-03).
+    AND NOT (SCENARIO_LABEL = 'BUDGET' AND COALESCE(SCENARIO, '') LIKE '20__B-%'
+             AND FISCAL_YEAR <> 'FY' || SUBSTR(SCENARIO, 3, 2))
 ),
 src AS (
   SELECT
