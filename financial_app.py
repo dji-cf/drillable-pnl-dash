@@ -64,7 +64,9 @@ def home() -> None:
             st.markdown(f"- [{label}]({url})")
 
     with sga:
-        st.info("Coming soon: SG&A report (Will Oswald)")
+        import sga as sga_tab               # SG&A tab: Will Oswald's template
+        st.subheader("SG&A report (Will Oswald)")
+        sga_tab.render()
         st.markdown(f"[SG&A notes (Notion)]({SGA_NOTION})")
 
 

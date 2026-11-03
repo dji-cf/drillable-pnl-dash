@@ -2,7 +2,8 @@
 
 1. `import streamlit_app` renders nothing and never calls data.load_master.
 2. An AppTest run of financial_app.py raises nothing, shows the four top tabs
-   in order, the draft header, and the three SharePoint links under Cash Flow.
+   in order, the draft header, the three SharePoint links under Cash Flow, and
+   the SG&A tab's report table with its "Total SG&A (template)" row.
 3. Each BU page (same url_paths as the Drillable P&L) runs without exception.
 
 AppTest cannot click the custom-component drill; that needs a browser.
@@ -78,10 +79,18 @@ def main() -> None:
         if not ok:
             problems.append(f"Cash Flow link {label} missing")
     for tab, who in [("Balance Sheet", "Tara Petrucci"),
-                     ("Cash Flow", "Afriti Rahim, Jack Braun"),
-                     ("SG&A", "Will Oswald")]:
+                     ("Cash Flow", "Afriti Rahim, Jack Braun")]:
         if not any(who in x.value for x in by_label[tab].info):
             problems.append(f"tab {tab}: info with {who!r} missing")
+    # SG&A tab: the report table renders with its total row.
+    sga_tables = by_label["SG&A"].dataframe
+    sga_rows = list(sga_tables[0].value.index) if sga_tables else []
+    has_total = "Total SG&A (template)" in sga_rows
+    print(f"SG&A tab rows: {len(sga_rows)}, 'Total SG&A (template)' shown: {has_total}")
+    if not has_total:
+        problems.append("SG&A tab: 'Total SG&A (template)' row missing")
+    if not any("Will Oswald" in s.value for s in by_label["SG&A"].subheader):
+        problems.append("SG&A tab: header with 'Will Oswald' missing")
     inner = [t.label for t in by_label["Income Statement"].tabs
              if t.label != "Income Statement"]
     print("Income Statement inner tabs:", inner)

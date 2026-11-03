@@ -119,5 +119,7 @@ entities:
       - export.py
       - bu.py
       - agent_chat.py
+      - sga.py                        # SG&A tab
+      - reference/sga_mapping.csv     # Will Oswald's mapping (sga.py reads it)
       - pyproject.toml
       - .streamlit/config.toml

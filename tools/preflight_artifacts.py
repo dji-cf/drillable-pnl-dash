@@ -53,8 +53,20 @@ def main() -> None:
                 problems.append(f"{name}: MISSING {art}")
 
         # Anything the app imports must ship. Catch a new module that was added
-        # to the project but never added to the manifest.
+        # to the project but never added to the manifest. A module that another
+        # entity ships and that none of THIS entity's files import (sga.py:
+        # financial app only) need not ship here.
+        shipped_elsewhere = {
+            a for n, e in entities.items() if n != name
+            for a in ((e or {}).get("artifacts") or [])
+        }
+        own_src = "\n".join(sources.get(a, "") for a in artifacts)
         for module in sorted(ROOT.glob("*.py")):
+            imported = re.search(
+                rf"^\s*(import|from) {module.stem}\b", own_src, re.M)
+            if (module.name in shipped_elsewhere and not imported
+                    and module.name not in artifacts):
+                continue
             if module.name not in artifacts and module.name not in foreign:
                 problems.append(
                     f"{name}: {module.name} exists in the project but is not in "
