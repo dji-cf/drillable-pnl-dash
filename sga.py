@@ -6,10 +6,12 @@ mapping (reference/sga_mapping.csv, from his `SGA Template Mapping.xlsx`,
 
 - accounts not in Will's file go to ONE line, "Not mapped" (the `_Other`
   parents and AC_61627 wait for Will);
-- AC_61002 @ CC_40313 (Pisa) is "Key Litigation Costs", shown BELOW the total
-  (Vivek renames it in the view);
+- AC_61002 @ CC_40313 (Pisa) is "Key Litigation and Regulatory" (Will Oswald,
+  2026-10-29; Maya yes 2026-11-03), shown BELOW the total;
 - the check row = Oracle total (AC_50000 @ CC_30000) - template total - Key
-  Litigation, and should be 0.
+  Litigation, and should be 0;
+- lines follow Will's template (sheet "NASE Total", column M, rows 13-73 of
+  `SG&A Consolidated - 2027 Bud (1st Sub).xlsx`) with its 6 subtotals.
 
 SG&A rule (docs/fleet/cfd-sga-retie.md 1.1, LIKELY -- Vivek has not
 confirmed): AC_60000..AC_62999 at cost centers outside CC_1xxxx, CC_30000 and
@@ -34,11 +36,52 @@ FY = "FY total"
 
 NOT_MAPPED = "Not mapped"
 TOTAL = "Total SG&A (template)"
-KEY_LIT = "Key Litigation Costs"
+KEY_LIT = "Key Litigation and Regulatory"
 CHECK = "Check vs Oracle total (AC_50000 @ CC_30000)"
 KEY_LIT_ACCOUNT, KEY_LIT_CC = "AC_61002", "CC_40313"
 TOTAL_ACCOUNT, TOTAL_CC = "AC_50000", "CC_30000"
 PARENTS = ("AC_60500", "AC_60597")
+
+#: Will's 52 lines in template order (LINE_ORDER in sga_mapping.csv = position).
+TEMPLATE_ORDER = (
+    "Salaries - Base Salaries", "Severance", "Bonus Expense", "Benefits",
+    "Allocated Compensation", "Legal & Litigation", "Audit", "Tax Services",
+    "Recruiting & Relocation", "Accounting (Oracle consultants)",
+    "Marketing Consultants", "Computer/Tech - Outside services/Consulting Fees",
+    "Outside Services (Temp Labor)", "Other Professional Services",
+    "Meals (indiv)", "Entertainment (Client)", "Aviation (private jet)",
+    "Trade Shows & Seminar attendance (tickets)", "Travel (air, hotel, taxi)",
+    "Telephone & Cell phone reimbursement",
+    "Rent (co-working space fees, office parking)",
+    "Rent/Lease - Allocations IN from FHI/Commerce/FBG",
+    "Lease Expense (formal lease amort, sublease income)",
+    "Repairs and Maintenance", "Utilities", "Office Supplies", "Marketing",
+    "Computer/Tech - Other", "Computer/Tech - Equipment",
+    "Computer/Tech - Software Licenses & Maintenance",
+    "Tech - Allocations IN from FHI/Commerce/FBG", "Insurance",
+    "Insurance - Allocations IN from FHI/Commerce/FBG", "Licenses and Taxes",
+    "Banking Fees", "Internet Commissions (Amazon, Walmart)", "Foreign Exchange",
+    "Research & Development (incl Collect Credit)", "Donations",
+    "Special Events (Athlete signings, holiday parties)",
+    "Employee Relations (staff events, staff gifts, staff entertain)",
+    "Bad Debt", "Postage", "Dues & Subscriptions",
+    "Rev Share (MLB, other licenses)",
+    "Rev Share - guarantee (NBA & NFL Settlement)", "Player Bonus",
+    "Misc Contract Costs (Athlete 360 Deals Shortfall)",
+    "Contract Costs (license rights signing bonus amort)",
+    "Intercompany Service Charge",
+    "Other SG&A - Allocations IN from FHI/Commerce/FBG", "Other/Miscellaneous",
+)
+#: Template subtotals: (name, first LINE_ORDER, last LINE_ORDER), shown after
+#: the last line. Marketing (27) has none.
+SUBTOTALS = (
+    ("Total Compensation", 1, 5),
+    ("Total Professional Services and Outside Services", 6, 14),
+    ("Total Travel and Entertainment", 15, 20),
+    ("Total Rent and Office", 21, 26),
+    ("Total Technology", 28, 31),
+    ("Total Other/Miscellaneous", 32, 52),
+)
 
 SQL = f"""
 SELECT LOB, SCENARIO, FISCAL_YEAR AS YEAR, PERIOD, ACCOUNT, COST_CENTER,
@@ -93,15 +136,24 @@ def _pivot(df: pd.DataFrame, index) -> pd.DataFrame:
 
 
 def report(df: pd.DataFrame, lob: str, scenario: str, year: str) -> pd.DataFrame:
-    """Will's lines, Not mapped, total, Key Litigation and the check row."""
+    """Will's lines with the template subtotals, Not mapped, total, Key
+    Litigation and the check row. The total sums lines + Not mapped only."""
     sl = df[(df["lob"] == lob) & (df["scenario"] == scenario) & (df["year"] == year)]
     p = _pivot(sl, "line") if not sl.empty else pd.DataFrame(columns=[*MONTHS, FY])
     p = p.reindex([*lines(), NOT_MAPPED, KEY_LIT, "__oracle_total__"], fill_value=0.0)
     body = p.loc[[*lines(), NOT_MAPPED]]
     total = body.sum()
     check = p.loc["__oracle_total__"] - total - p.loc[KEY_LIT]
-    out = pd.concat([body, total.to_frame(TOTAL).T, p.loc[[KEY_LIT]],
-                     check.to_frame(CHECK).T])
+    ordered = lines()
+    shown = []
+    for i, line in enumerate(ordered, start=1):
+        shown.append(p.loc[[line]])
+        for name, first, last in SUBTOTALS:
+            if last == i:
+                sub = p.loc[ordered[first - 1:last]].sum()
+                shown.append(sub.to_frame(name).T)
+    out = pd.concat([*shown, p.loc[[NOT_MAPPED]], total.to_frame(TOTAL).T,
+                     p.loc[[KEY_LIT]], check.to_frame(CHECK).T])
     out.index.name = "Line"
     return out
 
@@ -138,7 +190,7 @@ def render() -> None:
                         index=years.index(DEFAULT_YEAR) if DEFAULT_YEAR in years else 0)
 
     st.dataframe(report(df, lob, scenario, year).style.format("{:,.2f}"),
-                 use_container_width=True, height=35 * 59)
+                 use_container_width=True, height=35 * 65)
     st.caption("Mapping = Will Oswald's SGA Template Mapping.xlsx (2026-10-14). "
                "LOBs LB_303, LB_305-LB_308 show large 'Not mapped' amounts "
                "until Will maps the _Other accounts.")

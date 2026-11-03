@@ -37,9 +37,20 @@ def main() -> None:
             problems.append(label)
 
     r = sga.report(df, "LB_302", "SEP26RF", "FY26")
-    print(f"lines in table: {len(r)} (52 Will + Not mapped + total + Key Lit + check)")
-    if len(r) != 56:
-        problems.append(f"table has {len(r)} rows, not 56")
+    print(f"rows in table: {len(r)} (52 Will + 6 subtotals + Not mapped + total "
+          f"+ {sga.KEY_LIT} + check)")
+    if len(r) != 62:
+        problems.append(f"table has {len(r)} rows, not 62")
+    order = [x for x in r.index if x in sga.TEMPLATE_ORDER]
+    print(f"52 lines in template order: {order == list(sga.TEMPLATE_ORDER)}")
+    if order != list(sga.TEMPLATE_ORDER):
+        problems.append("lines are not in template order")
+    for name, first, last in sga.SUBTOTALS:
+        want = r.loc[list(sga.TEMPLATE_ORDER[first - 1:last]), FY].sum()
+        check(f"subtotal {name}", r.loc[name, FY], want)
+    subs = sum(r.loc[n, FY] for n, _, _ in sga.SUBTOTALS) + r.loc["Marketing", FY]
+    check("6 subtotals + Marketing + Not mapped = template total",
+          subs + r.loc[sga.NOT_MAPPED, FY], r.loc[sga.TOTAL, FY])
     check("LB_302 SEP26RF FY26 template total", r.loc[sga.TOTAL, FY], 402_433_283.86)
     check("LB_302 SEP26RF FY26 Key Litigation", r.loc[sga.KEY_LIT, FY], 2_778_538.51)
     check("LB_302 SEP26RF FY26 Oracle total",
@@ -72,9 +83,12 @@ def apptest() -> None:
     err = "; ".join(str(e.value) for e in at.exception)
     rows = list(at.dataframe[0].value.index) if at.dataframe else []
     print(f"\nAppTest sga.render(): exception={err or 'none'}, rows={len(rows)}, "
-          f"total row shown={sga.TOTAL in rows}, first={rows[:1]}, last={rows[-3:]}")
+          f"total row shown={sga.TOTAL in rows}, {sga.KEY_LIT!r} shown={sga.KEY_LIT in rows}")
+    print("first 8 rows:", rows[:8])
+    print("subtotal rows:", [(rows.index(n), n) for n, _, _ in sga.SUBTOTALS if n in rows])
+    print("last 4 rows:", rows[-4:])
     print("pickers:", [(s.label, s.value) for s in at.selectbox])
-    if err or sga.TOTAL not in rows:
+    if err or sga.TOTAL not in rows or sga.KEY_LIT not in rows:
         raise SystemExit(1)
 
 
