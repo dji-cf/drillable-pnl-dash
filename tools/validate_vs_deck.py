@@ -730,16 +730,16 @@ _PDF_LABELS = {
     ("Revenue", "north_america"): "North America", ("Revenue", "international"): "International",
     ("Revenue", "total_physical_cards"): "Total Physical Cards", ("Revenue", "digital"): "Digital",
     ("Revenue", "total_ex_emerging"): "Subtotal",
-    ("Revenue", "fanatics_collect"): "Fanatics Collect", ("Revenue", "total"): "Total Revenue",
+    ("Revenue", "fanatics_collect"): "Fanatics Live and Collect", ("Revenue", "total"): "Total Revenue",
     ("Gross Margin", "north_america"): "North America", ("Gross Margin", "international"): "International",
     ("Gross Margin", "total_physical_cards"): "Total Physical Cards", ("Gross Margin", "digital"): "Digital",
     ("Gross Margin", "total_ex_emerging"): "Subtotal",
-    ("Gross Margin", "fanatics_collect"): "Fanatics Collect", ("Gross Margin", "total"): "Total Gross Margin",
+    ("Gross Margin", "fanatics_collect"): "Fanatics Live and Collect", ("Gross Margin", "total"): "Total Gross Margin",
     ("EBITDA", "north_america"): "North America", ("EBITDA", "international"): "International",
     ("EBITDA", "eliminations"): "Eliminations", ("EBITDA", "total_physical_cards"): "Total Physical Cards",
     ("EBITDA", "digital"): "Digital", ("EBITDA", "corporate"): "Corporate",
     ("EBITDA", "total_ex_emerging"): "Subtotal",
-    ("EBITDA", "fanatics_collect"): "Fanatics Collect", ("EBITDA", "key_litigation"): "Key Litigation Costs",
+    ("EBITDA", "fanatics_collect"): "Fanatics Live and Collect", ("EBITDA", "key_litigation"): "Key Litigation Costs",
     ("EBITDA", "tcg"): "TCG", ("EBITDA", "total"): "Total EBITDA",
 }
 
@@ -756,7 +756,15 @@ STG_TOL_DOLLARS = 1_000_000.0
 STG_TOL_PCT = 0.005
 _STG_PERIODS = ("Q1", "Q2", "Q3", "Q4", tx.ANNUAL)
 _EB_LEAVES = ("North America", "International", "Eliminations", "Digital",
-              "Corporate", "Fanatics Collect", "Key Litigation Costs", "TCG")
+              "Corporate", "Fanatics Live and Collect", "Key Litigation Costs", "TCG")
+
+
+def _p7_labels(block: dict) -> dict:
+    """deck_pdf_p7.json prints 'Fanatics Collect'; the app's row is 'Fanatics
+    Live and Collect' (Maya, 2026-11-03). Renamed on load; the JSON stays as
+    transcribed."""
+    return {k.replace("|Fanatics Collect", "|Fanatics Live and Collect"): v
+            for k, v in block.items()}
 
 
 def _row(section: str, label: str) -> tx.Row:
@@ -875,8 +883,8 @@ def main_stg() -> None:
     pdf = _deck_keys(json.loads(STG_DECK_JSON.read_text(encoding="utf-8")))
     jul = _deck_keys(json.loads(DECK_JSON.read_text(encoding="utf-8")))
     may = json.loads(STG_MAY_JSON.read_text(encoding="utf-8"))
-    runs = [("DECK p.7", _fc("Sep"), pdf[_fc("Sep")], True),
-            ("DECK p.7", _fc("Aug"), pdf[_fc("Aug")], True),
+    runs = [("DECK p.7", _fc("Sep"), _p7_labels(pdf[_fc("Sep")]), True),
+            ("DECK p.7", _fc("Aug"), _p7_labels(pdf[_fc("Aug")]), True),
             ("DECK JUL", _fc("Jul"), _deck_json_expected(jul, _fc("Jul")), False),
             ("DECK JUL", _fc("Jun"), _deck_json_expected(jul, _fc("Jun")), False),
             ("DECK MAY", _fc("May"), _pdf_json_expected(may["MAY26RF"]), True)]

@@ -78,7 +78,7 @@ def _span(months: Sequence[str]) -> str:
     return months[0] if len(months) == 1 else f"{months[0]}{EN_DASH}{months[-1]}"
 
 
-GRAINS: tuple[str, ...] = ("annual", "quarterly", "monthly")
+GRAINS: tuple[str, ...] = ("annual", "quarterly", "monthly", "ytd")
 
 SECTIONS: tuple[str, ...] = ("Revenue", "Gross Margin", "EBITDA", "EBITDA Margin")
 # The deck prints no section header for the single-row margin section
@@ -448,7 +448,7 @@ ROWS: tuple[Row, ...] = (
     _rev(2, "Total Physical Cards",   "subtotal", _phys),
     _rev(3, "Digital",                "sub",      _digital_residual),
     _rev(4, "Subtotal",               "subtotal", _exem),
-    _rev(5, "Fanatics Collect",       "sub",      _fanlive),
+    _rev(5, "Fanatics Live and Collect", "sub",      _fanlive),
     _rev(6, "Total Revenue",          "total",    _grand_total),
     # -- Gross Margin % (unreconciled) ------------------------------------
     # Each row's basis is the Revenue row directly above it, so the two blocks
@@ -459,7 +459,7 @@ ROWS: tuple[Row, ...] = (
     _gm(9,  "Total Physical Cards",   "Total Physical Cards %",   "subtotal", _phys),
     _gm(10, "Digital",                "Digital %",                "sub",      _digital_residual),
     _gm(11, "Subtotal",               "Subtotal %",               "subtotal", _exem),
-    _gm(12, "Fanatics Collect",       "Fanatics Collect %",       "sub",      _fanlive),
+    _gm(12, "Fanatics Live and Collect", "Fanatics Live and Collect %", "sub",    _fanlive),
     _gm(13, "Total Gross Margin",     "Total Gross Margin %",     "total",    _grand_total),
     # -- EBITDA (unreconciled) --------------------------------------------
     _eb(14, "North America",          "sub",      _na_gross),
@@ -471,7 +471,7 @@ ROWS: tuple[Row, ...] = (
     # either, so there is nothing to show and they render as an em-dash.
     _eb(19, "Corporate",              "sub",      None),
     _eb(20, "Subtotal",               "subtotal", _exem),
-    _eb(21, "Fanatics Collect",       "sub",      _fanlive),
+    _eb(21, "Fanatics Live and Collect", "sub",      _fanlive),
     _eb(22, "Key Litigation Costs",   "sub",      _keylit),
     _eb(23, "TCG",                    "sub",      None),
     _eb(24, "Total EBITDA",           "total",    _grand_total),
@@ -489,7 +489,7 @@ ROW_TOOLTIPS: dict[tuple[str, str], str] = {
         "North America Gross Margins exclude eliminations; "
         "Total Gross Margin includes eliminations.")
        for sec in ("Revenue", "Gross Margin", "EBITDA")},
-    **{(sec, "Fanatics Collect"): "Fanatics Live (LB_306) + Marketplace / PWCC (LB_307)"
+    **{(sec, "Fanatics Live and Collect"): "Fanatics Live (LB_306) + Marketplace / PWCC (LB_307)"
        for sec in ("Revenue", "Gross Margin", "EBITDA")},
     # The deck's "Total ex-Emerging Svcs", renamed on screen (James, CI-66);
     # the hover keeps the old name findable.
@@ -629,17 +629,38 @@ def forecast_options(cube: "Cube", include_retired: bool = False) -> list[str]:
 
 
 def comp_options(cube: "Cube", forecast: str, include_retired: bool = False) -> list[str]:
-    """Comparison dropdown, porting the deck's refreshCompOpts().
+    """Comparison dropdown: what the selected scenario may be compared to.
 
-    '' is the "None" entry. Then Budgets, complete Actuals, and forecasts, each
-    newest first, EXCEPT the selected forecast -- comparing a vintage to itself
-    is the deck's one excluded case, and resolve_comp() below reproduces its
-    reset-on-collision.
+    '' is the "None" entry. Then, each newest first (Maya, 2026-11-03):
+      * the Budget of the same fiscal year;
+      * complete Actuals of the PRIOR fiscal year;
+      * forecasts of the same fiscal year made BEFORE the selected one (an
+        earlier as-of month) -- Jun FC compares to May FC, never to Aug FC.
+    No later scenarios and no Budget / forecast of another year. The selected
+    vintage itself is never offered; resolve_comp() resets a stored choice
+    that is no longer allowed.
     """
+    fy = cube.fiscal_year.get(forecast, "")
+    prior_fy = f"FY{int(fy[2:]) - 1:02d}" if fy[2:].isdigit() else None
+    main = vintage_parts(forecast)
+
+    def made_before(k: str) -> bool:
+        # A Budget predates every forecast of its year; Actuals postdate them.
+        if main is None or main[0] == BUDGET:
+            return False
+        if main[0] == ACTUAL:
+            return True
+        parts = vintage_parts(k)
+        return parts is not None and parts[1:] < main[1:]
+
     visible = [k for k in cube.visible(include_retired) if k != forecast]
+    label, year = cube.scenario_label.get, cube.fiscal_year.get
     out: list[str] = [""]
-    for label in ("BUDGET", "ACTUAL", "FORECAST"):
-        out += _newest_first([k for k in visible if cube.scenario_label.get(k) == label])
+    out += _newest_first([k for k in visible if label(k) == "BUDGET" and year(k) == fy])
+    out += _newest_first([k for k in visible if label(k) == "ACTUAL"
+                          and year(k) == prior_fy and cube.is_complete(k)])
+    out += _newest_first([k for k in visible if label(k) == "FORECAST"
+                          and year(k) == fy and made_before(k)])
     return out
 
 
@@ -881,16 +902,17 @@ class Cube:
         """(period_key, label) pairs for one vintage at one grain.
 
         The annual column is appended to the quarterly and monthly grains, as
-        in the deck, and a YTD column (see ytd_period) sits just before it at
-        every grain. Only periods the vintage actually has are listed, so a
-        partial Actuals year yields its closed months rather than fabricating
-        a Q4.
+        in the deck. YTD is its own grain (James, 10/20): just the vintage's
+        YTD column (see ytd_period), or its FY column -- labelled as FY -- when
+        it has none (a Budget, a Jan FC, a complete Actuals year). Only periods
+        the vintage actually has are listed, so a partial Actuals year yields
+        its closed months rather than fabricating a Q4.
         """
         tail = [(ANNUAL, self.period_label(vintage, ANNUAL))]
-        ytd = self.ytd_period(vintage)
-        if ytd is not None:
-            tail.insert(0, ytd)
 
+        if grain == "ytd":
+            ytd = self.ytd_period(vintage)
+            return [ytd] if ytd is not None else tail
         if grain == "annual":
             return tail
         if grain == "quarterly":

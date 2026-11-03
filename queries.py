@@ -572,7 +572,7 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     # file 601 = NASE+INTL+DIGITAL+GCP+ELIMS+CORP OH (+HEDGE, 0.0 FY26F)
     ("Revenue", "Subtotal"):               _NA_REV + _INTL + _DIGITAL + _CORP_REV,
     # file 446-465 LIVE + 490-509 PWCC
-    ("Revenue", "Fanatics Collect"):       _FANCOL,
+    ("Revenue", "Fanatics Live and Collect"): _FANCOL,
     # file 579 -- every block.
     ("Revenue", "Total Revenue"):          _ALL_LOBS,
     # -- Gross Margin % (same terms as the Revenue row, ONE exception) -----
@@ -586,7 +586,7 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     ("Gross Margin", "Total Physical Cards"):   _NA_REV + _INTL,
     ("Gross Margin", "Digital"):                _DIGITAL,
     ("Gross Margin", "Subtotal"):               _NA_REV + _INTL + _DIGITAL + _CORP_REV,
-    ("Gross Margin", "Fanatics Collect"):       _FANCOL,
+    ("Gross Margin", "Fanatics Live and Collect"): _FANCOL,
     ("Gross Margin", "Total Gross Margin"):     _ALL_LOBS,
     # -- Adj. EBITDA (= AEBITDA in the file) -------------------------------
     # file 6-179 NASE + 314-333 GCP + 358-377 Elims GCP. Topps elims are the
@@ -605,7 +605,7 @@ STG_ROW_MAP: dict[tuple[str, str], _T] = {
     ("EBITDA", "Corporate"):              _CORP_EB,
     ("EBITDA", "Subtotal"):               _PHYS_EB + _DIGITAL + _CORP_EB,
     # file 446-465 LIVE + 490-509 PWCC
-    ("EBITDA", "Fanatics Collect"):       _FANCOL,
+    ("EBITDA", "Fanatics Live and Collect"): _FANCOL,
     # file 624 Pisa Costs + 627 NASE Key Litigations. Costs, so negated.
     ("EBITDA", "Key Litigation Costs"):   ((-1, "pisa301"), (-1, "pisa302")),
     # file 556-575: LB_308 (new LOB) + LB_301 @ CC_70123 (old method).
@@ -628,7 +628,7 @@ BU_DEFS: dict[str, _T] = {
     "na":      STG_ROW_MAP[("EBITDA", "North America")],
     "intl":    STG_ROW_MAP[("EBITDA", "International")],
     "digital": STG_ROW_MAP[("EBITDA", "Digital")],
-    "collect": STG_ROW_MAP[("EBITDA", "Fanatics Collect")],
+    "collect": STG_ROW_MAP[("EBITDA", "Fanatics Live and Collect")],
 }
 #: North America's revenue memo lines: the Topps eliminations the BU basis
 #: leaves out, and the folded figure that equals consolidated row 0 -- the

@@ -1,4 +1,4 @@
-"""The BU P&L pages: North America, International, Digital and Fanatics Collect.
+"""The BU P&L pages: North America, International, Digital and Fanatics Live and Collect.
 
 One draft layout for all four, read from the same cube as the consolidated
 page -- the BU lines ride in STG_SQL (queries.BU_LINES), so there is one pull
@@ -37,7 +37,7 @@ BU_NAMES: dict[str, str] = {
     "na": "North America",
     "intl": "International",
     "digital": "Digital",
-    "collect": "Fanatics Collect",
+    "collect": "Fanatics Live and Collect",
 }
 #: st.navigation url_path per page, so /north-america deep-links.
 URL_PATHS: dict[str, str] = {
