@@ -1,9 +1,10 @@
-"""Headless checks for financial_app.py (Collectibles Financial Dashboard).
+"""Headless checks for financial_app.py (Collectibles Consolidated Financials Dashboard).
 
 1. `import streamlit_app` renders nothing and never calls data.load_master.
-2. An AppTest run of financial_app.py raises nothing, shows the four top tabs
-   in order, the draft header, the three SharePoint links under Cash Flow, and
-   the SG&A tab's report table with its "Total SG&A (template)" row.
+2. An AppTest run of financial_app.py raises nothing, shows the three top tabs
+   in order, Income Statement's sub-tabs Consolidated P&L and SG&A Detail, the
+   draft header, the three SharePoint links under Cash Flow, and the SG&A
+   Detail report table with its "Total SG&A (template)" row.
 3. Each BU page (same url_paths as the Drillable P&L) runs without exception.
 
 AppTest cannot click the custom-component drill; that needs a browser.
@@ -25,8 +26,9 @@ from streamlit.util import calc_hash  # noqa: E402
 import bu  # noqa: E402
 
 APP = ROOT / "financial_app.py"
-TABS = ["Income Statement", "Balance Sheet", "Cash Flow", "SG&A"]
-HEADER = "(DRAFT) Collectibles Financial Dashboard"
+TABS = ["Income Statement", "Balance Sheet", "Cash Flow"]
+INCOME_TABS = ["Consolidated P&L", "SG&A Detail"]
+HEADER = "(DRAFT) Collectibles Consolidated Financials Dashboard"
 #: Copied from the request, independent of financial_app.py (importing that
 #: file would run it).
 SHAREPOINT = {
@@ -59,11 +61,12 @@ def main() -> None:
     at = AppTest.from_file(str(APP), default_timeout=180).run()
     if at.exception:
         problems.append("home: " + "; ".join(str(e.value) for e in at.exception))
-    # at.tabs walks depth-first: the consolidated page's own two tabs sit
-    # inside Income Statement, between it and Balance Sheet.
+    # at.tabs walks depth-first: Income Statement's sub-tabs and the
+    # consolidated page's own two tabs sit between it and Balance Sheet.
     inner_labels = ["Forecast Table", "Historical Trends"]
+    nested = INCOME_TABS + inner_labels
     by_label = {t.label: t for t in at.tabs}
-    labels = [t.label for t in at.tabs if t.label not in inner_labels]
+    labels = [t.label for t in at.tabs if t.label not in nested]
     print("top tabs:", labels)
     if labels != TABS:
         problems.append(f"top tabs {labels} != {TABS}")
@@ -82,18 +85,23 @@ def main() -> None:
                      ("Cash Flow", "Afriti Rahim, Jack Braun")]:
         if not any(who in x.value for x in by_label[tab].info):
             problems.append(f"tab {tab}: info with {who!r} missing")
-    # SG&A tab: the report table renders with its total row.
-    sga_tables = by_label["SG&A"].dataframe
+    # SG&A Detail sub-tab: the report table renders with its total row.
+    sga_tables = by_label["SG&A Detail"].dataframe
     sga_rows = list(sga_tables[0].value.index) if sga_tables else []
     has_total = "Total SG&A (template)" in sga_rows
     print(f"SG&A tab rows: {len(sga_rows)}, 'Total SG&A (template)' shown: {has_total}")
     if not has_total:
         problems.append("SG&A tab: 'Total SG&A (template)' row missing")
-    if not any("Will Oswald" in s.value for s in by_label["SG&A"].subheader):
+    if not any("Will Oswald" in s.value for s in by_label["SG&A Detail"].subheader):
         problems.append("SG&A tab: header with 'Will Oswald' missing")
-    inner = [t.label for t in by_label["Income Statement"].tabs
-             if t.label != "Income Statement"]
-    print("Income Statement inner tabs:", inner)
+    subs = [t.label for t in by_label["Income Statement"].tabs
+            if t.label in INCOME_TABS]
+    print("Income Statement sub-tabs:", subs)
+    if subs != INCOME_TABS:
+        problems.append(f"Income Statement sub-tabs {subs} != {INCOME_TABS}")
+    inner = [t.label for t in by_label["Consolidated P&L"].tabs
+             if t.label in inner_labels]
+    print("Consolidated P&L inner tabs:", inner)
     if inner != inner_labels:
         problems.append(f"consolidated page tabs missing: {inner}")
     # One title only: render_shell(title=None) drops the old app's <h1>.
@@ -111,10 +119,10 @@ def main() -> None:
         if err:
             problems.append(f"BU {key}: {err}")
         md = " ".join(m.value for m in at.markdown)
-        has_new = "<h1>" in md and "Collectibles Financial Dashboard</h1>" in md
-        print(f"BU page {key} header 'Collectibles Financial Dashboard': {has_new}")
+        has_new = "<h1>" in md and "Collectibles Consolidated Financials Dashboard</h1>" in md
+        print(f"BU page {key} header 'Collectibles Consolidated Financials Dashboard': {has_new}")
         if not has_new or "Collectibles Forecast Dashboard" in md:
-            problems.append(f"BU {key}: header is not 'Collectibles Financial Dashboard'")
+            problems.append(f"BU {key}: header is not 'Collectibles Consolidated Financials Dashboard'")
 
     # The shell renders inside pages here, not in the entrypoint, so the
     # Forecast / vs. widget keys drop on a page switch; FC_SHADOW / COMP_SHADOW

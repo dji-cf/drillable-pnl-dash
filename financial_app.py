@@ -1,8 +1,9 @@
-"""Collectibles Financial Dashboard -- the entrypoint of a SEPARATE app.
+"""Collectibles Consolidated Financials Dashboard -- the entrypoint of a SEPARATE app.
 
-Top tabs Income Statement, Balance Sheet, Cash Flow and SG&A. Income Statement
-is the Drillable P&L's consolidated page, reused from streamlit_app.py (whose
-shell and pages only render when called); the other three are placeholders.
+Top tabs Income Statement, Balance Sheet and Cash Flow. Income Statement has
+sub-tabs Consolidated P&L (the Drillable P&L's consolidated page, reused from
+streamlit_app.py, whose shell and pages only render when called) and SG&A
+Detail (sga.py); the other two top tabs are placeholders.
 
 The BU drill still works: this file registers its own home page plus the four
 BU pages in its own st.navigation, and points streamlit_app.CONSOLIDATED and
@@ -30,8 +31,9 @@ _spec = importlib.util.spec_from_file_location(
 pnl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pnl)
 
-APP_TITLE = "Collectibles Financial Dashboard"
-TABS = ["Income Statement", "Balance Sheet", "Cash Flow", "SG&A"]
+APP_TITLE = "Collectibles Consolidated Financials Dashboard"
+TABS = ["Income Statement", "Balance Sheet", "Cash Flow"]
+INCOME_TABS = ["Consolidated P&L", "SG&A Detail"]
 
 BALANCE_SHEET_NOTION = "https://app.notion.com/p/3d76c07d730e812fad34c04a1b70e937"
 SGA_NOTION = "https://app.notion.com/p/3f16c07d730e8125b03ad305ac5b6985"
@@ -47,11 +49,18 @@ st.set_page_config(page_title=pnl._tab(APP_TITLE), layout="wide")
 
 def home() -> None:
     st.title(pnl._drafted(APP_TITLE))
-    income, balance, cash, sga = st.tabs(TABS)
+    income, balance, cash = st.tabs(TABS)
 
     with income:
-        pnl.render_shell(title=None)        # the st.title above is the one title
-        pnl.consolidated_page()
+        consolidated, sga = st.tabs(INCOME_TABS)
+        with consolidated:
+            pnl.render_shell(title=None)    # the st.title above is the one title
+            pnl.consolidated_page()
+        with sga:
+            import sga as sga_tab           # SG&A Detail: Will Oswald's template
+            st.subheader("SG&A report (Will Oswald)")
+            sga_tab.render()
+            st.markdown(f"[SG&A notes (Notion)]({SGA_NOTION})")
 
     with balance:
         st.info("Coming soon: Balance Sheet (Tara Petrucci)")
@@ -62,12 +71,6 @@ def home() -> None:
         st.markdown(f"[Cash Flow notes (Notion)]({CASH_FLOW_NOTION})")
         for label, url in CASH_FLOW_LINKS.items():
             st.markdown(f"- [{label}]({url})")
-
-    with sga:
-        import sga as sga_tab               # SG&A tab: Will Oswald's template
-        st.subheader("SG&A report (Will Oswald)")
-        sga_tab.render()
-        st.markdown(f"[SG&A notes (Notion)]({SGA_NOTION})")
 
 
 def _bu_wrapper(key: str):

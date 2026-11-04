@@ -1,4 +1,4 @@
-"""SG&A tab of the Collectibles Financial Dashboard (Will Oswald's template).
+"""SG&A Detail (under Income Statement) of the Collectibles Consolidated Financials Dashboard (Will Oswald's template).
 
 One read-only SELECT on CARDPLN_PL_BY_LOB_STG, then a pandas join to Will's
 mapping (reference/sga_mapping.csv, from his `SGA Template Mapping.xlsx`,

@@ -98,7 +98,7 @@ entities:
       name: COLLECTIBLES_FINANCIAL_DASH
       database: ORACLE_DATA_PROD
       schema: SANDBOX
-    title: "(DRAFT) Collectibles Financial Dashboard"
+    title: "(DRAFT) Collectibles Consolidated Financials Dashboard"
     stage: streamlit_stage
     runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
     compute_pool: SYSTEM_COMPUTE_POOL_CPU
