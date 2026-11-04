@@ -3,12 +3,12 @@
 The consolidated page, ported from FC_Forecast Dashboard_Jul 2026 FC.html:
 
   Forecast Table     26 P&L rows x up to 42 columns, collapsible sections,
-                     vintage comparison, three grains, Excel / CSV export.
+                     vintage comparison, four Views, Excel / CSV export.
   Historical Trends  how the outlook moved, in which months, and which
                      business units moved it -- for one metric.
 
 plus, under the STG source, a P&L page per business unit (bu.py): North
-America, International, Digital and Fanatics Collect. Clicking one of those
+America, International, Digital and Fanatics Live and Collect. Clicking one of those
 labels on the consolidated Revenue or EBITDA block opens it.
 
 STRUCTURE. This file is the entrypoint SHELL: page config, header, the data
@@ -65,6 +65,7 @@ GRAIN_LABELS: dict[str, str] = {
     "annual": "Annual",
     "quarterly": "Quarterly",
     "monthly": "Monthly",
+    "ytd": "YTD",
 }
 NONE_LABEL = "— None —"
 #: The line under the header while the figures are still being validated
@@ -250,7 +251,7 @@ def _keep_grain(key: str) -> None:
 
 
 def _grain_control(key: str) -> str:
-    """The Annual / Quarterly / Monthly control, always seeded from GRAIN_SHADOW.
+    """The Annual / Quarterly / Monthly / YTD control, always seeded from GRAIN_SHADOW.
 
     The shadow is the one source of truth: the callback above writes it before
     the run a click causes, and every run writes it back into this page's

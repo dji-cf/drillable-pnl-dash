@@ -31,6 +31,7 @@ GRAIN_TITLES: dict[str, str] = {
     "annual": "Annual",
     "quarterly": "Quarterly",
     "monthly": "Monthly",
+    "ytd": "YTD",
 }
 
 _VALUE, _CHANGE = "value", "change"

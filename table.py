@@ -40,7 +40,7 @@ DRILL: dict[tuple[str, str], str] = {
     (sec, label): bu
     for sec in ("Revenue", "EBITDA")
     for label, bu in (("North America", "na"), ("International", "intl"),
-                      ("Digital", "digital"), ("Fanatics Collect", "collect"))
+                      ("Digital", "digital"), ("Fanatics Live and Collect", "collect"))
 }
 
 

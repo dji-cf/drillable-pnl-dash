@@ -65,3 +65,65 @@ Checks:
 - `python3 -m py_compile financial_app.py data.py queries.py sga.py tools/test_financial_app.py`: COMPILE_OK.
 - grep "Collectibles Financial Dashboard" outside docs/fleet/ (no .git, no __pycache__): 0 hits.
 - tools/test_financial_app.py NOT run (the Income Statement part needs a Snowflake login).
+
+## Forecast fixes brought in (a886ebc..98b675b) (updated 2026-11-04)
+Why: Maya ran commit 3e041a9 locally (2026-11-04 ~11:00). The Income Statement P&L showed the OLD Forecast
+logic (double 2026 Budget, Oct/Nov/Dec 2025 FC, no YTD view, "Fanatics Collect"). Maya said yes (2026-11-04 11:02:47).
+
+How: git merge / cherry-pick / apply / checkout are blocked for me. I read `git diff a886ebc 98b675b` and made
+the same edits with the edit and write tools. Nothing is committed. Diff base = a886ebc (not merge-base c119831).
+
+### The 10 files with no clash: now equal to 98b675b
+`git diff --stat 98b675b -- ISSUES.md bu.py master_query.sql table.py transforms.py tools/apptest_smoke.py
+tools/test_vintages.py tools/validate_vs_deck.py` = **empty**. The 2 new docs: `git show 98b675b:<f> | diff -q - <f>` = same.
+- ISSUES.md:370-371, :376-379 (A11 notes)
+- bu.py:1, :40 ("Fanatics Live and Collect")
+- master_query.sql:466-467 (comment)
+- table.py:43 (DRILL label)
+- transforms.py:81 (GRAINS + "ytd"); :451, :462, :474, :492 (label); :631-664 (comp_options, A10); :901-924 (periods, YTD View, A8)
+- tools/apptest_smoke.py:158-162 (no-retired branch)
+- tools/test_vintages.py:152-188, :255, :285, :287, :320-324 (new A8 / A10 expectations)
+- tools/validate_vs_deck.py:717-721, :734, :738, :743, :760, :763-768 (_p7_labels), :887-888
+- docs/fleet/fcst-ui-audit.md (new), docs/fleet/fcst-ui-fixes.md (new)
+
+### The 3 shared files: Forecast hunks added, this branch's work kept
+- export.py:34: `"ytd": "YTD"` in GRAIN_TITLES. The cfd-shell export changes are kept.
+- queries.py:173-175: `FIRST_FORECAST_FISCAL_YEAR = "FY26"`; :187: used in `_VINTAGE_FILTER` (forecast branch only).
+  :493-497: STG_SQL raw CTE `AND NOT (SCENARIO_LABEL = 'BUDGET' AND COALESCE(SCENARIO, '') LIKE '20__B-%'
+  AND FISCAL_YEAR <> 'FY' || SUBSTR(SCENARIO, 3, 2))`. :583, :597, :616, :639: "Fanatics Live and Collect".
+  The Cash EBITDA bridge SQL (`adj_ebitda_ex_es_sql`, def now at :693, block :684-727) is unchanged.
+  Proof: `git diff 6c6133d -- queries.py` = only those Forecast lines.
+- streamlit_app.py:6, :11 (docstring); :68 `"ytd": "YTD"` in GRAIN_LABELS; :254 (_grain_control docstring).
+  The render_shell / consolidated_page split is kept.
+- Proof: `git diff --stat 98b675b -- export.py queries.py streamlit_app.py` = 22 / 45 / 289. These are the same
+  numbers as `a886ebc..cfd-rename-sga-sub` before the change, so the only difference left is this branch's own work.
+
+**Clashes: none.** Every 98b675b hunk applied at its own text in all 3 files. No hunk touched the Cash bridge
+SQL, the cfd-shell split or the export prefix lines.
+
+### Not changed (this branch's work)
+financial_app.py (APP_TITLE, 3 TABS, INCOME_TABS, `_cash_ebitda_tile()`), sga.py, data.py, snowflake.yml, DRAFT_LABEL.
+
+### "Fanatics Collect" grep (without "Live and")
+No user-facing app string is left. financial_app.py and sga.py: 0 hits. Hits left (same as 98b675b's own list):
+queries.py:58 (comment), tools/gap_analysis.py:222 (dev script print), tools/validate_vs_deck.py:764, :767 (the
+load-time rename), master_query.sql:131, :333, :372, :417 (standalone SQL, no .py loads it), ISSUES.md:189-265
+(history), reference/deck_pdf_p7.json and reference/deck_jul2026.json (the deck's own printed label).
+Also `output/bundle/streamlit/drillable_pnl_dash/*.py`: an old build output, not source. The next bundle
+rebuilds it.
+
+### Tests
+- `python3 -m py_compile bu.py export.py queries.py streamlit_app.py table.py transforms.py tools/apptest_smoke.py
+  tools/test_vintages.py tools/validate_vs_deck.py financial_app.py sga.py data.py tools/test_financial_app.py`: COMPILE_OK.
+- `python3 tools/test_vintages.py` (it imports only pandas, export, queries, table, transforms; no Snowflake):
+  ```
+  ORDERING     pass
+  OCT 2026     pass
+  PERIODS      pass
+  JAN 2027     pass
+  DELTA MODES  pass
+  TRENDS       pass
+
+  ALL VINTAGE CHECKS PASS
+  ```
+- Not run: streamlit, tools/test_financial_app.py, tools/apptest_smoke.py, the validators (all need Snowflake).

@@ -149,13 +149,43 @@ def check_oct_2026() -> list[str]:
           f"forecast_options(retired) {tx.forecast_options(cube, True)}")
     comp = tx.comp_options(cube, "Sep 2026 FC")
     check(p, comp == ["", "2026B", "2025A", "Aug 2026 FC"], f"comp_options {comp}")
+    # A10: an earlier forecast never compares to a later one.
+    comp = tx.comp_options(cube, "Aug 2026 FC")
+    check(p, comp == ["", "2026B", "2025A"], f"comp_options(Aug) {comp}")
+    # A10: no forecast / Budget of another year, even with retired shown.
+    comp = tx.comp_options(cube, "Sep 2026 FC", include_retired=True)
+    check(p, comp == ["", "2026B", "2025A", "Aug 2026 FC"],
+          f"comp_options(retired) {comp}")
+    comp = tx.comp_options(cube, "2026B")
+    check(p, comp == ["", "2025A"], f"comp_options(2026B) {comp}")
+    comp = tx.comp_options(cube, "Dec 2025 FC", include_retired=True)
+    check(p, "2026B" not in comp and "Sep 2026 FC" not in comp,
+          f"FY25 forecast offered an FY26 comparison {comp}")
+    check(p, tx.resolve_comp("Sep 2026 FC", "Aug 2026 FC",
+                             tx.comp_options(cube, "Aug 2026 FC")) == "",
+          "a now-disallowed stored comparison did not reset")
 
-    # YTD column, every grain, just before FY.
-    for grain, n in (("annual", 2), ("quarterly", 6), ("monthly", 14)):
+    # A8: no YTD column at annual / quarterly / monthly; YTD is its own View.
+    for grain, n in (("annual", 1), ("quarterly", 5), ("monthly", 13)):
         periods = cube.periods("Sep 2026 FC", grain)
         check(p, len(periods) == n, f"{grain}: {len(periods)} periods, want {n}")
-        check(p, periods[-2] == ("YTD:Aug", "YTD Aug 26A"),
-              f"{grain}: YTD column {periods[-2]}")
+        check(p, not any(tx.is_ytd(pk) for pk, _ in periods),
+              f"{grain}: still has a YTD column")
+    check(p, cube.periods("Sep 2026 FC", "ytd") == [("YTD:Aug", "YTD Aug 26A")],
+          f"ytd view {cube.periods('Sep 2026 FC', 'ytd')}")
+    # Reference block is read at the same keys: YTD Aug of 2025A, not FY25.
+    check(p, cube.period_label("2025A", "YTD:Aug") == "YTD Aug 25A",
+          f"comp YTD label {cube.period_label('2025A', 'YTD:Aug')}")
+    # No YTD in the vintage -> its FY column, labelled as FY.
+    check(p, cube.periods("2026B", "ytd") == [(tx.ANNUAL, "FY 2026B")],
+          f"budget ytd view {cube.periods('2026B', 'ytd')}")
+    html = table.build_statement(cube, forecast="Sep 2026 FC", comp="2025A",
+                                 grain="ytd", collapsed={})
+    check(p, "YTD Aug 26A" in html and "YTD Aug 25A" in html,
+          "ytd view grid lacks main / reference YTD headers")
+    frame = export.statement_frame(cube, forecast="Sep 2026 FC", comp="2025A",
+                                   grain="ytd")
+    check(p, frame.shape == (len(tx.ROWS), 4 + 3), f"ytd export shape {frame.shape}")
     check(p, cube.ytd_period("2026B") is None, "Budget got a YTD column")
     check(p, cube.ytd_period("2025A") is None, "complete Actuals got a YTD column")
 
@@ -222,7 +252,7 @@ def check_period_labels() -> list[str]:
     fc, en = "Sep 2026 FC", tx.EN_DASH
 
     got = [lbl for _, lbl in cube.periods(fc, "quarterly")]
-    check(p, got == ["Q1 26A", "Q2 26A", "Q3 26A+F", "Q4 26F", "YTD Aug 26A", "FY 2026F"],
+    check(p, got == ["Q1 26A", "Q2 26A", "Q3 26A+F", "Q4 26F", "FY 2026F"],
           f"{fc} quarterly labels {got}")
     for vintage, pk, want in (
         ("Aug 2026 FC", "Q3", "Q3 26A+F"),          # Jul actual, Aug-Sep forecast
@@ -252,9 +282,9 @@ def check_period_labels() -> list[str]:
     html = table.build_statement(cube, forecast=fc, comp="2025A", grain="quarterly",
                                  collapsed={})
     comp, curr = _tier(html, "ph-comp"), _tier(html, "ph-curr")
-    check(p, comp == ["Q1 25A", "Q2 25A", "Q3 25A", "Q4 25A", "YTD Aug 25A", "FY 2025A"],
+    check(p, comp == ["Q1 25A", "Q2 25A", "Q3 25A", "Q4 25A", "FY 2025A"],
           f"vs 2025A: comparison headers {comp}")
-    check(p, curr == ["Q1 26A", "Q2 26A", "Q3 26A+F", "Q4 26F", "YTD Aug 26A", "FY 2026F"],
+    check(p, curr == ["Q1 26A", "Q2 26A", "Q3 26A+F", "Q4 26F", "FY 2026F"],
           f"vs 2025A: forecast headers {curr}")
     check(p, _tier(html, "ph-growth") == curr, "change block lost the forecast's labels")
     check(p, f'title="Jul{en}Aug actual, Sep forecast">Q3 26A+F<' in html,
@@ -287,11 +317,11 @@ def check_jan_2027() -> list[str]:
     fc = tx.forecast_options(cube)
     check(p, fc == ["Feb 2027 FC", "Jan 2027 FC"], f"forecast_options {fc}")
     comp = tx.comp_options(cube, "Feb 2027 FC")
-    check(p, comp == ["", "2027B", "2026A", "2025A", "Jan 2027 FC"],
+    check(p, comp == ["", "2027B", "2026A", "Jan 2027 FC"],
           f"comp_options {comp}")
     check(p, cube.year("Feb 2027 FC") == "2027", "header year")
-    check(p, cube.periods("Feb 2027 FC", "annual")[0] == ("YTD:Jan", "YTD Jan 27A"),
-          f"{cube.periods('Feb 2027 FC', 'annual')}")
+    check(p, cube.periods("Feb 2027 FC", "ytd") == [("YTD:Jan", "YTD Jan 27A")],
+          f"{cube.periods('Feb 2027 FC', 'ytd')}")
     check(p, cube.ytd_period("Jan 2027 FC") is None, "no closed month, still a YTD")
     # Prior-year comparison is a real variance, never greyed.
     check(p, not cube.same_actuals("Feb 2027 FC", "2026A", "Jan"), "PY greyed")

@@ -155,6 +155,11 @@ def main() -> None:
     retired = [v for v in shown if v not in fc_opts]
     if at.exception:
         problems.append(f"show_retired: {describe(at)}")
+    elif not retired and not any(getattr(c, "key", None) == "show_retired"
+                                 for c in at.checkbox):
+        # No retired vintage, so the app draws no toggle (A11 removed the FY25
+        # forecasts from the SQL). Nothing to bring back.
+        print("prior-year toggle: none retired (OK, A11)")
     elif not retired:
         problems.append("show_retired brought back no forecast")
     else:
