@@ -714,10 +714,11 @@ STG_MAY_JSON = DECK_JSON.parent / "deck_pdf_jul_jun_may.json"
 # Apr/May/Jun reallocation documented in KNOWN_REALLOCATIONS[("2025A", 0)]
 # (-6,179,159.04 / -4,830,806.60 / +11,009,965.64 here, netting to zero). Only
 # these three months are exempt, and only while the value matches to $0.01M;
-# every other period stays gated. Keyed on 2025A, but it also covers the FY25
-# forecasts (Oct/Nov/Dec 2025 FC, admitted since vintages became year-aware)
-# in their ACTUAL months only -- an RF snapshot's closed months are the Actual
-# scenario's, so they carry the same restatement.
+# every other period stays gated. Keyed on 2025A. It used to cover the FY25
+# forecasts (Oct/Nov/Dec 2025 FC) too, but A11 removed them from the SQL
+# (queries.FIRST_FORECAST_FISCAL_YEAR), so today only 2025A reaches it. If they
+# come back, it applies only in their ACTUAL months, because an RF snapshot's
+# closed months are the Actual scenario's, so they carry the same restatement.
 _INTL_ELIMS_FY25_REALLOC: dict[tuple[str, str], float] = {
     ("2025A", "Apr"): -6.18e6,
     ("2025A", "May"): -4.83e6,

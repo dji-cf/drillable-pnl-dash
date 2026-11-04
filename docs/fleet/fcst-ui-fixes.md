@@ -116,11 +116,25 @@ GROUP BY 1 ORDER BY 2, 1 LIMIT 100
 
 **Retired vintages after the change:** none. Actual months (query id 01c82be7-031a-2c6e-69de-0701a0ac5b9f): FY25 = 12 (final), FY26 = 9 (not final). `Cube.is_retired` (`transforms.py:744-752`) only marks a BUDGET or FORECAST of a final year. FY25 now has neither, so `retired` is empty, and `streamlit_app.py:130` `if retired:` does not draw the checkbox. The help text (`streamlit_app.py:135-138`) is built from the data, so it is not wrong, and I did not change it. Self-check (updated 2026-11-03): query id 01c82be9-031a-2bcc-69de-0701a0aca333 shows that FY25 FORECAST / BUDGET in STG is only DEC25RF (30,191 rows), NOV25RF (27,584) and OCT25RF (27,558), with no FY25 budget. The new floor drops all 3. The generated `STG_SQL` and `MASTER_SQL` each contain `FISCAL_YEAR >= 'FY26'` once (forecast branch) and `FISCAL_YEAR >= 'FY25'` once (actual/budget branch).
 
-**Text that still says FY25 forecasts can be shown** (reported only; not user-facing in the app, so not changed):
+**Text that still says FY25 forecasts can be shown** (reported only; not user-facing in the app, so not changed; the first 3 were fixed on 2026-11-04, see "A11 follow-up" below):
 - `ISSUES.md:374-375` "Today that is Oct/Nov/Dec 2025 FC, admitted by the year-aware filter." This is now out of date.
 - `tools/validate_vs_deck.py:718`: a comment saying "Oct/Nov/Dec 2025 FC, admitted since vintages became year-aware".
 - `master_query.sql:466`: a comment with `'Oct 2025 FC' .. 'Sep 2026 FC'` (a standalone file; no code loads it).
 - `docs/fleet/fcst-ui-audit.md:18` (A11 PARTLY) is the audit record, kept as it was.
 - `tools/test_vintages.py` still stubs "Dec 2025 FC" in Python. This is intended: it tests the retire rule, and it passes.
 
-**Watch (not run, not changed):** `tools/apptest_smoke.py:152-159` (a live-data AppTest; I did not run it) expects the prior-year toggle to bring back at least one forecast. With live STG data nothing is retired now, so that check will likely report "show_retired brought back no forecast". This is a test expectation, not an app bug. David or Maya should decide whether to update it.
+**Watch (not run, not changed):** `tools/apptest_smoke.py:152-159` (a live-data AppTest; I did not run it) expects the prior-year toggle to bring back at least one forecast. With live STG data nothing is retired now, so that check will likely report "show_retired brought back no forecast". This is a test expectation, not an app bug. David or Maya should decide whether to update it. (Updated 2026-11-04: Maya said "yes" to fixing it, see below.)
+
+## A11 follow-up: old test + notes (updated 2026-11-04)
+
+**Who / why:** Maya said "yes" in thread fcst-ui-fixes on 2026-11-04 09:10:31. After A11 nothing is retired, so 1 old test and 3 notes were wrong. There is no app logic change: `queries.py`, `transforms.py` and `streamlit_app.py` are not touched (`git diff 8ebc5be --stat`: only the 4 files below plus this doc).
+
+| File:line | What changed |
+| --- | --- |
+| `tools/apptest_smoke.py:158-164` | New branch: if no forecast came back AND the app drew no `show_retired` checkbox (`at.checkbox` has no key `show_retired`), print `prior-year toggle: none retired (OK, A11)` and add no problem. The old check stays: if the checkbox is drawn but brings back nothing, the problem "show_retired brought back no forecast" is still added. If retired vintages exist, the old path runs as before. The later stale-trends check (`if retired:`, ~line 263) already skips when the list is empty. |
+| `ISSUES.md:369-371` | "the only year constant" is now: `FIRST_FISCAL_YEAR` (FY25) is the floor for Actuals and Budgets, and `FIRST_FORECAST_FISCAL_YEAR` (FY26) is the floor for forecasts (A11). |
+| `ISSUES.md:376-379` | "Today that is Oct/Nov/Dec 2025 FC" is now: the toggle is drawn only when something is retired. Today nothing is retired. The FY25 forecasts are removed from the SQL (A11; James 2026-10-20, Megan 2026-10-23, Maya 2026-11-03), and there is no 2025 Budget. |
+| `tools/validate_vs_deck.py:717-721` | Comment only: the FY25 forecasts are no longer loaded (A11), so only 2025A reaches `_INTL_ELIMS_FY25_REALLOC`. No code change. |
+| `master_query.sql:466-467` | Comment only: the example `vintage_key` list is now `'2025A' \| '2026B' \| '2026A' \| 'Jan 2026 FC' .. 'Oct 2026 FC' \| '2027B'`, with the note "no 2025 FCs (A11)". The list matches query 01c82bcb-031a-2c6e-69de-0701a0a8b507. |
+
+**Tests:** `python3 -m py_compile tools/apptest_smoke.py tools/validate_vs_deck.py` passes. `python3 tools/test_vintages.py` prints ALL VINTAGE CHECKS PASS. I did not run `tools/apptest_smoke.py`, because it needs streamlit and Snowflake. The new branch is checked only by reading the code: `at.checkbox` is Streamlit AppTest's list of checkbox elements. Self-check (updated 2026-11-04): `at.checkbox` is a property at `.venv/.../streamlit/testing/v1/app_test.py:802` (`def checkbox(self) -> WidgetList[Checkbox]`), and the stale-trends guard is exactly at `tools/apptest_smoke.py:263` (`if retired:`).

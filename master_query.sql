@@ -463,7 +463,8 @@ statement AS (
 -- EVEN), which is why transforms.round_half_up exists.
 --
 -- Change the two filters below to move around:
---   vintage_key  '2025A' | '2026B' | '2026A' | 'Oct 2025 FC' .. 'Sep 2026 FC'
+--   vintage_key  '2025A' | '2026B' | '2026A' | 'Jan 2026 FC' .. 'Oct 2026 FC' | '2027B'
+--                (no 2025 FCs: A11 removed them from queries._VINTAGE_FILTER)
 --   period_type  'YEAR' | 'QUARTER' | 'MONTH'
 SELECT
     row_idx,

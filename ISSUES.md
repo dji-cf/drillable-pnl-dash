@@ -367,12 +367,16 @@ Forecasts are `'Sep 2026 FC'` (was `'Sep. FC'`), Actuals and Budget stay
 reads each forecast only at the fiscal year of its own as-of date — RF
 scenarios are ~18-month rolling horizons (SEP26RF carries all of FY27), so
 without that match one key would hold two years. `queries.FIRST_FISCAL_YEAR`
-(`FY25`) is the only year constant, and it is a history floor.
+(`FY25`) is the history floor for Actuals and Budgets;
+`queries.FIRST_FORECAST_FISCAL_YEAR` (`FY26`) is the floor for forecasts (A11).
 
 **Retired vintages.** Once a year's actuals are final (its Actuals vintage has
 12 months), that year's forecasts and Budget are hidden by default
 (`Cube.is_retired`) and come back with the sidebar's *Show prior-year forecasts
-& budgets*. Today that is Oct/Nov/Dec 2025 FC, admitted by the year-aware filter.
+& budgets*. The toggle is drawn only when something is retired. Today nothing
+is: the FY25 forecasts (Oct/Nov/Dec 2025 FC) are removed from the SQL, not
+hidden (A11, `queries.FIRST_FORECAST_FISCAL_YEAR`; James 2026-10-20, Megan
+2026-10-23, Maya 2026-11-03), and there is no 2025 Budget.
 In January 2027 it will be every 2026 FC and 2026 Budget, with 2026 Actuals
 becoming the default comparison. `tools/test_vintages.py` asserts that
 transition offline.
