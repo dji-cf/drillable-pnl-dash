@@ -827,3 +827,59 @@ SELECT lb310, live, collect, tcg, tcg_cc, pisa,
        lb310 - live - collect - tcg + tcg_cc + pisa AS adj_ebitda_ex_es
 FROM s
 """
+
+
+# --------------------------------------------------------------------------
+# Balance Sheet tab: DRAFT stop-gap, US ledger 300000004289455 only
+# --------------------------------------------------------------------------
+# Source = docs/fleet/cfd-bs-gl-rollforward.md, "### Step 5: stop-gap SELECT"
+# (branch coco/cfd-bs-gl-rollforward, commit 8d1ec26), copied character for
+# character; only the period in CTE p is filled in. Mar-26 GL_BALANCES + POSTED
+# GL_JE_LINES (status 'P') Apr-26..period. US ledger 300000004289455 only: no
+# International, Fanatics Live or FCCS eliminations. Maya Iwabuchi OK'd it
+# 2026-11-03 15:24 and 2026-11-04 09:21.
+#: Periods the tab may ask for. Oct-26 is not closed (report G9, G10).
+BS_PERIODS = ["Aug-26", "Sep-26"]
+#: The 48 Tara BS rows with |diff| <= $1 for Aug-26 (report Step 2: no star,
+#: not zero on both sides). The tab shows ONLY these rows, and no totals.
+BS_TIE_ROWS = [28, 31, 32, 33, 37, 38, 39, 40, 45, 47, 48, 49, 50, 51, 52, 53, 55,
+               58, 67, 72, 74, 75, 76, 78, 79, 80, 81, 82, 85, 94, 97, 100, 101,
+               102, 103, 104, 105, 107, 109, 113, 114, 115, 116, 122, 127, 128,
+               129, 130]
+
+
+def bs_stopgap_sql(period: str = "Aug-26") -> str:
+    """PERIOD, BS_ROW, AC_CODES, LINE_NAME, GL_AMOUNT_TARA_SIGN, GL_ACCOUNTS."""
+    if period not in BS_PERIODS:      # allow-list: nothing unchecked reaches the SQL
+        raise ValueError(f"period {period!r} not in {BS_PERIODS}")
+    return f"""
+-- Balance Sheet stop-gap (US ledger 300000004289455). Change the period in CTE p only.
+with p as (select try_to_date(column1,'MON-YY') as target_dt from values ('{period}')),  -- parameter: target period(s)
+ac_map(code, rw) as (select * from values (10000,24),(11002,27),(11907,27),(11008,27),(11908,27),(11009,28),(11501,29),(11509,29),(11522,29),(11543,29),(11540,29),(11510,29),(11560,29),(11901,29),(11548,29),(11007,29),(11539,29),(11904,29),(11906,29),(11909,29),(11511,29),(11574,29),(11513,29),(11524,30),(11555,30),(11508,30),(11903,31),(11553,32),(11010,33),(13001,37),(13100,38),(13200,39),(13800,40),(13224,41),(14025,45),(14153,46),(14162,46),(14158,46),(14002,46),(14168,46),(14156,46),(14172,46),(14152,47),(14161,47),(14050,48),(14159,48),(14075,49),(14100,50),(14167,51),(14163,52),(14165,53),(14155,54),(14154,55),(14250,58),(14409,59),(14326,60),(14327,60),(14401,60),(14404,60),(14202,60),(14301,60),(14275,60),(14225,60),(14403,60),(14499,61),(16001,65),(17000,66),(17100,67),(18000,68),(18201,71),(18101,72),(18346,73),(18401,73),(18403,73),(18175,74),(18125,74),(18315,75),(18275,76),(18226,77),(18228,77),(18232,77),(18227,77),(18231,78),(18250,79),(18300,80),(18233,81),(18230,82),(18600,83),(18800,85),(18850,86),(20000,91),(21250,94),(21424,95),(21302,95),(21001,96),(21175,97),(21401,98),(21403,98),(21410,98),(21301,98),(21404,98),(21076,98),(21326,98),(21350,99),(21100,100),(21200,101),(21425,102),(21416,103),(21150,104),(21275,105),(22000,106),(25650,106),(18700,106),(12000,106),(23000,107),(25000,108),(24000,109),(24150,112),(24208,113),(24211,114),(24215,114),(24175,115),(24201,116),(24210,116),(24125,116),(24102,116),(24209,116),(24999,117),(25501,121),(26000,122),(27000,123),(27101,126),(27126,127),(27201,128),(27051,128),(27206,129),(27151,130),(27300,131),(25600,132),(30010,138),(30050,139),(30100,143),(30200,144),(30300,145),(30400,146),(30500,147),(30600,148),(30700,149),(30800,150),(13226,39),(18827,86)),
+bs_line(rw, ac_codes, line_name, tara_sign) as (select * from values (24,'FCCS_Cash And Cash Equivalents','Cash and Cash Equivalents',1),(27,'AC_11002 AC_11907 AC_11008 AC_11908','Accounts Receivable',1),(28,'AC_11009','Accounts Receivable - Accruals',1),(29,'AC_11501 AC_11509 AC_11522 AC_11543 AC_11540 AC_11510 AC_11560 AC_11901 AC_11548 AC_11007 AC_11539 AC_11904 AC_11906 AC_11909 AC_11511 AC_11574 AC_11513','Accounts Receivable - Other',1),(30,'AC_11524 AC_11555 AC_11508','Accounts Receivable - CC processors',1),(31,'AC_11903','Allowance for Doubtful Accounts',1),(32,'AC_11553','Unapplied Deposits',1),(33,'AC_11010','Accrued Returns',1),(37,'AC_13001','Raw Materials',1),(38,'AC_13100','Work in Progress',1),(39,'AC_13200','Finished Goods',1),(40,'AC_13800','Inventory Reserves',1),(41,'AC_13224','Inventory Elims',1),(45,'AC_14025','Prepaid Royalties',1),(46,'AC_14153 AC_14162 AC_14158 AC_14002 AC_14168 AC_14156 AC_14172','Prepaid Expenses',1),(47,'AC_14152 AC_14161','Prepaid Autos',1),(48,'AC_14050 AC_14159','Prepaid Marketing/Sponsorship',1),(49,'AC_14075','Prepaid Lic/Maint expenses',1),(50,'AC_14100','Prepaid Sales Tax',1),(51,'AC_14167','Prepaid Sign-on Bonuses',1),(52,'AC_14163','Prepaid Inventory',1),(53,'AC_14165','Prepaid - Image Rights Legends',1),(54,'AC_14155','Prepaid Management fees',1),(55,'AC_14154','Prepaid Insurance',1),(58,'AC_14250','Strategic partner contract cost',1),(59,'AC_14409','Note Receivable - Prepaid Taxes/FHI funding',1),(60,'AC_14326 AC_14327 AC_14401 AC_14404 AC_14202 AC_14301 AC_14275 AC_14225 AC_14403','Other Current Assets',1),(61,'AC_14499','Assets held for Sale',1),(65,'AC_16001','Fixed Assets',1),(66,'AC_17000','Goodwill',1),(67,'AC_17100','Intangible Assets',1),(68,'AC_18000','Investment in Subsidiaries',1),(71,'AC_18201','Note Receivable - Prepaid Taxes/FHI funding',1),(72,'AC_18101','Strategic Partner Contract Costs',1),(73,'AC_18346 AC_18401 AC_18403','Other Long Term Assets',1),(74,'AC_18175 AC_18125','Investments',1),(75,'AC_18315','Long Term Revolver Debt Issuance Costs',1),(76,'AC_18275','Cloud Computing Implementation Costs',1),(77,'AC_18226 AC_18228 AC_18232 AC_18227','Other Long-Term Prepaids',1),(78,'AC_18231','Image Rights - Legends',1),(79,'AC_18250','Long Term Deposits',1),(80,'AC_18300','Indemnification Asset',1),(81,'AC_18233','Prepaid Sign-on Bonuses',1),(82,'AC_18230','Prepaid Insurance',1),(83,'AC_18600','Operating Leases',1),(85,'AC_18800','Intercompany Note Receivables',1),(86,'AC_18850','Intracompany Receivable',1),(91,'FCCS_Acct Payable','Account Payable',-1),(94,'AC_21250','Accrued Royalties',-1),(95,'AC_21424 AC_21302','Inventory accruals - GRNI',-1),(96,'AC_21001','Salaries, wages, and benefits',-1),(97,'AC_21175','Accrued Legal and professional fees',-1),(98,'AC_21401 AC_21403 AC_21410 AC_21301 AC_21404 AC_21076 AC_21326','Accrued Other',-1),(99,'AC_21350','Accrued Taxes and Duties',-1),(100,'AC_21100','Accrued Sales Tax',-1),(101,'AC_21200','Accrued Marketing',-1),(102,'AC_21425','Accrued Temp Labor',-1),(103,'AC_21416','Accrued Capex',-1),(104,'AC_21150','Accrued Shipping',-1),(105,'AC_21275','Interest Accrual',-1),(106,'AC_22000 AC_25650 AC_18700 AC_12000 AC_18850','Intercompany Payable',-1),(107,'AC_23000','Deferred Revenue',-1),(108,'AC_25000','Current Portion of operating lease liabilities',-1),(109,'AC_24000','Current Portion of Long Term Debt',-1),(112,'AC_24150','Income Tax Payable',-1),(113,'AC_24208','Deposits / On Account Liability',-1),(114,'AC_24211 AC_24215','Buyback Program',-1),(115,'AC_24175','Marketplace Seller Payables',-1),(116,'AC_24201 AC_24210 AC_24125 AC_24102 AC_24209','Other Current Liabilities',-1),(117,'AC_24999','Liabilities Held for Sale',-1),(121,'AC_25501','Non-current operating lease liabilities',-1),(122,'AC_26000','Long Term Debt',-1),(123,'AC_27000','Deferred Income Tax Liability',-1),(126,'AC_27101','UTP',-1),(127,'AC_27126','NBA Guarantee',-1),(128,'AC_27201 AC_27051','Other Long Term Liabilities',-1),(129,'AC_27206','Buyback programs',-1),(130,'AC_27151','Royalties',-1),(131,'AC_27300','Long Term Deferred Revenue',-1),(132,'AC_25600','Intercompany Notes - Payable',-1),(133,'AC_25650','Intracompany Payable',-1),(138,'AC_30010','Mezzanine Equity - Minority Interest',-1),(139,'AC_30050','Mezzanine Equity - Preferred Stock',-1),(143,'AC_30100','Preferred Stock',-1),(144,'AC_30200','Treasury Stock',-1),(145,'AC_30300','Common Stock',-1),(146,'AC_30400','Additional Paid In Capital',-1),(147,'AC_30500','Dividends',-1),(148,'AC_30600','NCI',-1),(149,'AC_30700','CTA',-1),(150,'AC_30800','Retained Earnings',-1)),
+opening as (  -- Mar-26 closing balance (last complete GL_BALANCES period)
+  select balancecodecombinationid cc, sum(balancebeginbalancedr - balancebeginbalancecr + balanceperiodnetdr - balanceperiodnetcr) amt
+  from ORACLE_DATA_PROD.FCT_GL.GL_BALANCES
+  where balanceledgerid = 300000004289455 and balanceactualflag = 'A' and balancecurrencycode = 'USD'
+    and balancetranslatedflag is null and balanceperiodname = 'Mar-26'
+  group by 1),
+movement as (  -- posted lines Apr-26 .. target period
+  select p.target_dt, l.code_combination_id cc, sum(coalesce(l.accounted_dr,0) - coalesce(l.accounted_cr,0)) amt
+  from ORACLE_DATA_PROD.FCT_GL.GL_JE_LINES l, p
+  where l.ledger_id = 300000004289455 and l.status = 'P'
+    and try_to_date(l.period_name,'MON-YY') between '2026-04-01'::date and p.target_dt
+  group by 1, 2),
+acct as (
+  select x.target_dt, g.segment3::int s3, sum(x.amt) amt
+  from (select p.target_dt, o.cc, o.amt from opening o cross join p union all select * from movement) x
+  join ORACLE_DATA_PROD.FCT_GL.GL_CODE_COMBINATIONS g on g.code_combination_id = x.cc
+  where g.segment3 rlike '^[1-3][0-9]{{4}}$'
+  group by 1, 2),
+mapped as (select a.target_dt, a.s3, a.amt, m.rw from acct a asof join ac_map m match_condition(a.s3 >= m.code))
+select to_char(p.target_dt,'Mon-YY') as period, b.rw as bs_row, b.ac_codes, b.line_name,
+       round(b.tara_sign * coalesce(sum(m.amt),0), 2) as gl_amount_tara_sign,
+       listagg(distinct m.s3, ' ') within group (order by m.s3) as gl_accounts
+from bs_line b cross join p left join mapped m on m.rw = b.rw and m.target_dt = p.target_dt
+group by p.target_dt, b.rw, b.ac_codes, b.line_name, b.tara_sign
+order by p.target_dt, b.rw
+"""

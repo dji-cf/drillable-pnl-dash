@@ -32,6 +32,21 @@ import queries  # noqa: E402
 BRIDGE = dict(lb310=2099969200, live=-29810853, collect=19665525, tcg=-9764159,
               tcg_cc=760006, pisa=48934006, adj_ebitda_ex_es=2169572699)
 data.load_adj_ebitda_ex_es = lambda *a, **k: pd.DataFrame([BRIDGE])
+#: Balance Sheet stop-gap: rows 28 and 37 tie; row 24 (Cash) does not and must
+#: be filtered out by financial_app.py.
+BS_MOCK = pd.DataFrame({
+    "period": ["Aug-26"] * 3, "bs_row": [24, 28, 37],
+    "ac_codes": ["FCCS_Cash And Cash Equivalents", "AC_11009", "AC_13001"],
+    "line_name": ["Cash and Cash Equivalents", "Accounts Receivable - Accruals",
+                  "Raw Materials"],
+    "gl_amount_tara_sign": [69719961.99, -749129.72, 364730187.79],
+    "gl_accounts": ["10000", "11009", "13001"]})
+data.load_bs_stopgap = lambda *a, **k: BS_MOCK.copy()
+BS_CAPTION = ("US ledger only (ledger 300000004289455). Excludes International, "
+              "Fanatics Live and FCCS eliminations, so numbers are NOT Tara's "
+              "consolidated totals. Built from Mar-26 GL balances + posted GL "
+              "journal lines. Shows only the 48 lines that tied to Tara's Aug-26 "
+              "package. Unaudited draft. Oct-26 not shown: not closed.")
 
 APP = ROOT / "financial_app.py"
 TABS = ["Income Statement", "Balance Sheet", "Cash Flow"]
@@ -108,6 +123,32 @@ def main() -> None:
                      ("Cash Flow", "Cash Flow (draft) (Afriti Rahim, Jack Braun)")]:
         if not any(who in x.value for x in by_label[tab].info):
             problems.append(f"tab {tab}: info with {who!r} missing")
+    # Balance Sheet stop-gap: caption, and a table without the non-tying row.
+    bs_tab = by_label["Balance Sheet"]
+    caps = [c.value for c in bs_tab.caption]
+    print(f"balance sheet caption shown: {BS_CAPTION in caps}")
+    if BS_CAPTION not in caps:
+        problems.append("Balance Sheet: 'US ledger only' caption missing")
+    bs_lines = [str(x) for d in bs_tab.dataframe for x in d.value["Line"]]
+    bs_warn = [w.value for w in bs_tab.warning]
+    print("balance sheet table lines:", bs_lines, "warnings:", bs_warn)
+    if bs_lines != ["Accounts Receivable - Accruals", "Raw Materials"] and not bs_warn:
+        problems.append(f"Balance Sheet table wrong (Cash must be filtered out): {bs_lines}")
+    if not any("Waiting on Tara" in c for c in caps):
+        problems.append("Balance Sheet: Raw Materials / Finished Goods footnote missing")
+    if any("Coming soon" in i.value for i in bs_tab.info):
+        problems.append("Balance Sheet still says 'Coming soon'")
+    try:
+        queries.bs_stopgap_sql("Oct-26")
+        problems.append("bs_stopgap_sql('Oct-26') did not raise ValueError")
+    except ValueError:
+        print("bs_stopgap_sql('Oct-26'): ValueError ok")
+    bs_sql = queries.bs_stopgap_sql("Aug-26")
+    bs_sql_ok = all(x in bs_sql for x in ("300000004289455", "status = 'P'", "'Mar-26'",
+                                          "values ('Aug-26')"))
+    print(f"bs_stopgap_sql('Aug-26'): {'ok' if bs_sql_ok else 'BAD'}")
+    if not bs_sql_ok:
+        problems.append("bs_stopgap_sql('Aug-26') lacks ledger / status 'P' / Mar-26")
     # SG&A Detail sub-tab: the report table renders with its total row.
     sga_tables = by_label["SG&A Detail"].dataframe
     sga_rows = list(sga_tables[0].value.index) if sga_tables else []

@@ -196,6 +196,16 @@ def load_adj_ebitda_ex_es(scenario: str = "SEP26RF", fiscal_year: str = "FY26") 
     return _q(queries.adj_ebitda_ex_es_sql(scenario, fiscal_year))
 
 
+@st.cache_data(ttl=_CACHE_TTL, show_spinner="Loading Balance Sheet...")
+def load_bs_stopgap(period: str) -> pd.DataFrame:
+    """Balance Sheet tab: US-ledger GL roll-forward, one row per FCCS BS line.
+
+    All 91 lines; financial_app.py keeps only queries.BS_TIE_ROWS. Not caught
+    here, same reason as load_master; financial_app.py shows the error.
+    """
+    return _q(queries.bs_stopgap_sql(period))
+
+
 @st.cache_data(ttl=_CACHE_TTL, show_spinner="Loading COGS detail...")
 def load_cogs_drill(vintage: str, fiscal_year: str, lobs: tuple[str, ...]) -> pd.DataFrame:
     """A BU's COGS child accounts for one vintage's fiscal year, $M.

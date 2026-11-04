@@ -22,6 +22,7 @@ import streamlit as st
 
 import bu
 import data
+import queries
 
 # A fresh copy of streamlit_app for every script run, NOT a plain import: an
 # imported module is one object shared by every browser session on the server,
@@ -65,7 +66,30 @@ def home() -> None:
             st.markdown(f"[SG&A notes (Notion)]({SGA_NOTION})")
 
     with balance:
-        st.info("Coming soon: Balance Sheet (Tara Petrucci)")
+        st.info("Balance Sheet (draft, stop-gap) (Tara Petrucci)")
+        # US GL roll-forward (queries.bs_stopgap_sql); only the 48 lines that
+        # tied to Tara's Aug-26 package, no totals (Maya, 2026-11-04 09:21).
+        bs_period = st.selectbox("Period", queries.BS_PERIODS, index=0, key="bs_period")
+        try:
+            bs = data.load_bs_stopgap(bs_period)
+        except Exception as e:
+            st.warning(f"Balance Sheet could not load: {e}")
+        else:
+            bs = bs[bs["bs_row"].astype(int).isin(queries.BS_TIE_ROWS)]
+            st.dataframe(pd.DataFrame({
+                "Line": bs["line_name"].values,
+                "FCCS code": bs["ac_codes"].values,
+                "US GL amount $": [f"{float(v):,.2f}" for v in bs["gl_amount_tara_sign"]],
+            }), hide_index=True)
+            st.caption("Raw Materials / Finished Goods: tie to Tara's final file only "
+                       "after a hand-typed +/-1,852,926 move. Waiting on Tara.")
+        st.caption("US ledger only (ledger 300000004289455). Excludes International, "
+                   "Fanatics Live and FCCS eliminations, so numbers are NOT Tara's "
+                   "consolidated totals. Built from Mar-26 GL balances + posted GL "
+                   "journal lines. Shows only the 48 lines that tied to Tara's Aug-26 "
+                   "package. Unaudited draft. Oct-26 not shown: not closed.")
+        if bs_period == "Sep-26":
+            st.caption("Sep-26 is not tied to Tara's package (no Sep file yet).")
         st.markdown(f"[Balance Sheet notes (Notion)]({BALANCE_SHEET_NOTION})")
 
     with cash:
