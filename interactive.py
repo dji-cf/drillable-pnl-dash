@@ -91,11 +91,17 @@ export default function ({ data, setTriggerValue, parentElement }) {
       setTriggerValue('drill', td.getAttribute('data-bu') + '|' + clicks);
     });
   });
+  mount.querySelectorAll('td.lbl[data-cogs]').forEach((td) => {
+    td.addEventListener('click', () => {
+      clicks += 1;
+      setTriggerValue('cogs', td.getAttribute('data-cogs') + '|' + clicks);
+    });
+  });
 }
 """
 
 #: The triggers _JS fires, in the order statement() checks them.
-TRIGGERS: tuple[str, ...] = ("toggle", "mode", "drill")
+TRIGGERS: tuple[str, ...] = ("toggle", "mode", "drill", "cogs")
 
 #: True when the runtime has the API at all. Streamlit 1.57 is the floor for
 #: st.components.v2; the interpreter on the global PATH here carries 1.48, so
@@ -121,7 +127,8 @@ def statement(html: str, *, key: str) -> tuple[str, str] | None:
     """Mount the statement grid; return the click that caused this run, if any.
 
     ``('toggle', 'Revenue')`` for a section header, ``('mode', 'usd')`` for the
-    change toggle, ``('drill', 'na')`` for a BU label. Non-None only on the
+    change toggle, ``('drill', 'na')`` for a BU label, ``('cogs', 'na')`` for a
+    BU page's Total COGS label. Non-None only on the
     script run caused by a click, so the caller updates its own session_state
     (or switches page) and lets the next run re-render.
     Returns None on the static fallback path, where nothing is clickable.
@@ -135,7 +142,8 @@ def statement(html: str, *, key: str) -> tuple[str, str] | None:
             res = _renderer(key=key, data={"html": html, "grid": key},
                             on_toggle_change=lambda: None,
                             on_mode_change=lambda: None,
-                            on_drill_change=lambda: None)
+                            on_drill_change=lambda: None,
+                            on_cogs_change=lambda: None)
         except Exception as exc:  # noqa: BLE001 -- degrade, never take the page down
             _RENDER_FAILURE = f"{type(exc).__name__}: {exc}"
         else:

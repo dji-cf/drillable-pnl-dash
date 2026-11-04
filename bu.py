@@ -68,6 +68,13 @@ _BUCKETS: tuple[tuple[str, str], ...] = (
     ("other",   "Other"),
 )
 
+#: The BU grid row whose label opens the COGS drill (streamlit_app._cogs_drill).
+TOTAL_COGS: tuple[str, str] = ("Cost of Goods Sold", "Total COGS")
+#: queries.COGS_ACCOUNT_BUCKET key -> the bucket row's label on this page.
+COGS_BUCKET_LABELS: dict[str, str] = {
+    ("mfg" if line == "std_mfg" else line): label for line, label in _BUCKETS
+}
+
 #: Structural zeros: buckets a BU has no business carrying. Omitted from its
 #: page -- unless the loaded cube says otherwise (see rows()).
 #:

@@ -673,6 +673,108 @@ assert sorted(BU_NA_NASE_NET_SALES + BU_NA_GCP) == sorted(BU_NA_INCL_ELIMS), (
     "North America Net Sales must be exactly NASE Net Sales + GCP")
 
 # ---------------------------------------------------------------------------
+# BU page COGS drill (Vivek's COGS drill-down, 2026-10-20)
+# ---------------------------------------------------------------------------
+# "Total COGS" on a BU page opens its child accounts. Same source and filters
+# as STG_SQL (not CARDPLN_PL_BY_LOB_V2: same cube, but the app reads STG), the
+# eight _STG_COGS_ACCOUNTS @ CC_10000, and the layout table only for labels --
+# a LEFT JOIN, because its INNER JOIN drops ACX_Compensation (not mapped under
+# 'ACX_Cost of Goods Sold'; checked 2026-11-03, 7 of the 8 accounts are).
+#
+# One more row keeps the drill summing to Total COGS: BU_COGS is
+# COALESCE(AC_50000 parent, children), so a LOB with a parent and no children
+# (LB_394, GCP eliminations) carries COGS no child shows. It comes back as
+# account AC_50000, residual = parent - children, in Standard Manufacturing --
+# exactly where BU_STD_MFG puts it.
+LAYOUT = "ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_ACCOUNT_LAYOUT"
+COGS_PARENT_LINE = "ACX_Cost of Goods Sold"
+COGS_RESIDUAL_ACCOUNT = "AC_50000"
+COGS_RESIDUAL_LABEL = "COGS without child detail"
+
+#: account -> BU bucket key (_STG_COGS_BUCKETS), residual included.
+COGS_ACCOUNT_BUCKET: dict[str, str] = {
+    **{a: key for key, accts in _STG_COGS_BUCKETS.items() for a in accts},
+    COGS_RESIDUAL_ACCOUNT: "mfg",
+}
+
+
+def bu_base_lobs(bu: str) -> tuple[str, ...]:
+    """The LOB codes behind a BU's base terms. Carve-outs are 0 on COGS."""
+    lobs = []
+    for sign, key in BU_DEFS[bu]:
+        if key.startswith(("pisa", "tcg")):
+            continue
+        assert sign == 1, f"BU {bu}: a negative base LOB term {key} has no COGS drill"
+        lobs.append(STG_SEGMENTS[key])
+    return tuple(lobs)
+
+
+def _lit(s: str) -> str:
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def cogs_drill_sql(scenario: str, fiscal_year: str, lobs: tuple[str, ...],
+                   entity: str = STG_ENTITY) -> str:
+    """COGS children per account, summed over ``lobs``, PERIOD_TYPE 'YEAR'.
+
+    ``scenario`` is an STG SCENARIO code ('SEP26RF') or the app's vintage key
+    ('Sep 2026 FC', '2026B'); the key is matched through _VINTAGE_KEY, so a
+    budget vintage reads exactly the scenarios the cube does. Literal SQL, no
+    binds, like every cached statement here (see data._q). Amounts in $.
+    """
+    accts = _sql_list(_STG_COGS_ACCOUNTS)
+    return f"""
+WITH raw AS (
+  SELECT
+      SCENARIO_LABEL, SCENARIO, FISCAL_YEAR,
+     {_FORECAST_ASOF.strip()} AS FORECAST_ASOF_DATE,
+      LOB, ACCOUNT, COST_CENTER, AMOUNT
+  FROM {STG}
+  WHERE CHANNEL = 'Total Channel' AND PLAN_ELEMENT = 'Total_Budget'
+    AND VERSION = 'Final' AND CURRENCY = 'USD_Reporting'
+    AND ENTITY = {_lit(entity)}
+    AND (   (LOB <> 'LB_392' AND INTERCOMPANY = '{STG_ICP_TOTAL}')
+         OR (LOB =  'LB_392' AND INTERCOMPANY = '{STG_ICP_INTL_ELIMS}'))
+    AND PERIOD_TYPE = 'YEAR' AND FISCAL_YEAR = {_lit(fiscal_year)}
+    AND LOB IN ({", ".join(_lit(l) for l in lobs)})
+    AND COST_CENTER = 'CC_10000'
+    AND ACCOUNT IN ({accts}, '{COGS_RESIDUAL_ACCOUNT}')
+),
+src AS (
+  SELECT * FROM raw
+  WHERE ({_VINTAGE_FILTER.strip()})
+    AND (SCENARIO = {_lit(scenario)} OR ({_VINTAGE_KEY.strip()}) = {_lit(scenario)})
+),
+per_lob AS (
+  SELECT lob,
+      SUM(IFF(account = '{COGS_RESIDUAL_ACCOUNT}', amount, NULL)) AS parent,
+      SUM(IFF(account IN ({accts}), amount, NULL)) AS children
+  FROM src GROUP BY lob
+),
+amounts AS (
+  SELECT account, SUM(amount) AS amount
+  FROM src WHERE account IN ({accts}) GROUP BY account
+  UNION ALL
+  SELECT '{COGS_RESIDUAL_ACCOUNT}', SUM(parent - ZEROIFNULL(children))
+  FROM per_lob WHERE parent IS NOT NULL
+  HAVING SUM(parent - ZEROIFNULL(children)) IS NOT NULL
+)
+SELECT
+    a.account,
+    COALESCE(lay.display_label,
+             IFF(a.account = '{COGS_RESIDUAL_ACCOUNT}', '{COGS_RESIDUAL_LABEL}', a.account))
+        AS display_label,
+    lay.sort_order,
+    a.amount
+FROM amounts a
+LEFT JOIN (
+  SELECT pl_line, MIN(display_label) AS display_label, MIN(sort_order) AS sort_order
+  FROM {LAYOUT} WHERE parent_line = '{COGS_PARENT_LINE}' GROUP BY pl_line
+) lay ON lay.pl_line = a.account
+ORDER BY lay.sort_order NULLS LAST, a.account
+"""
+
+# ---------------------------------------------------------------------------
 # Rebind for the chosen source
 # ---------------------------------------------------------------------------
 LEGACY_SEGMENTS = SEGMENTS

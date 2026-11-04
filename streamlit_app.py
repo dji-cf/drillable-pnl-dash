@@ -57,6 +57,8 @@ import charts                    # noqa: E402
 import data                      # noqa: E402
 import export                    # noqa: E402
 import interactive               # noqa: E402
+import pandas as pd              # noqa: E402
+import queries                   # noqa: E402
 import style                     # noqa: E402
 import table                     # noqa: E402
 import transforms as tx          # noqa: E402
@@ -286,11 +288,13 @@ def _statement_view(
     money: Callable[[float | None], str] = tx.fmt_tile,
     subject: str = export.CONSOLIDATED,
     drill: Mapping[tuple[str, str], str] | None = None,
+    cogs: Mapping[tuple[str, str], str] | None = None,
 ) -> tuple[str, str] | None:
-    """Tiles, downloads and the statement grid. Returns a 'drill' click, if any.
+    """Tiles, downloads and the statement grid. Returns a 'drill' or 'cogs'
+    click, if any.
 
     Section and mode clicks are handled here; a drill click is returned for the
-    caller to switch page on.
+    caller to switch page on, a cogs click for the BU page to open its detail.
     """
     grain = _grain_control(grain_key)
 
@@ -336,6 +340,7 @@ def _statement_view(
         # Only where the click can land: on the static path the labels would
         # look like links and do nothing.
         drill=drill if live else None,
+        cogs=cogs if live else None,
     )
     clicked = interactive.statement(grid, key=grid_key)
 
@@ -357,7 +362,7 @@ def _statement_view(
         elif kind == "mode" and value in tx.DELTA_MODES and value != delta_mode:
             st.session_state.delta_mode = value
             changed = True
-        elif kind == "drill":
+        elif kind in ("drill", "cogs"):
             return clicked
     if changed:
         # The grid -- and for a mode click the tiles and downloads above it --
@@ -495,12 +500,58 @@ def bu_page(key: str) -> None:
     rows = bu.rows(key, cube)
     # A per-page widget key: one key shared by the four BU pages is a different
     # widget on each, which opens with no value and would reset the View.
-    _statement_view(
+    clicked = _statement_view(
         grain_key=f"grain_{key}", collapsed_key=f"collapsed_{key}",
         grid_key=f"statement_{key}",
         rows=rows, sections=bu.SECTIONS_WITH_HEADER, tooltips=bu.tooltips(key),
         tiles=bu.tiles(rows), money=tx.fmt_tile_m, subject=bu.subject(key),
+        cogs={bu.TOTAL_COGS: key},
     )
+    _cogs_drill(key, clicked)
+
+
+def _cogs_drill(key: str, clicked: tuple[str, str] | None) -> None:
+    """Under a BU grid: the COGS child accounts behind its Total COGS.
+
+    Opened by a click on the "Total COGS" label ('cogs'), or by a plain button
+    when the grid's clicks are off. Full year of the selected forecast's own
+    fiscal year, over the BU's base LOBs (queries.bu_base_lobs).
+    """
+    state = f"cogs_drill_{key}"
+    if clicked == ("cogs", key):
+        st.session_state[state] = True
+    if not st.session_state.get(state):
+        if interactive.unavailable_reason():
+            if st.button("Show COGS detail", key=f"cogs_open_{key}"):
+                st.session_state[state] = True
+                st.rerun()
+        return
+
+    fy = cube.fiscal_year[forecast]
+    head, close = st.columns([6, 1], vertical_alignment="bottom")
+    with head:
+        st.markdown(f"#### COGS detail — {tx.vintage_label(forecast)}, {fy}")
+    with close:
+        if st.button("Close", key=f"cogs_close_{key}", icon=":material/close:"):
+            st.session_state[state] = False
+            st.rerun()
+    try:
+        df = data.load_cogs_drill(forecast, fy, queries.bu_base_lobs(key))
+    except Exception as exc:  # noqa: BLE001 -- the grid above must stay up
+        st.error(f"COGS detail could not load: {type(exc).__name__}: {exc}")
+        return
+    view = pd.DataFrame({
+        "COGS line": df["display_label"],
+        "SORT_ORDER": df["sort_order"],
+        "Account": df["account"],
+        "Bucket": df["bucket"].map(bu.COGS_BUCKET_LABELS),
+        "$M": df["amount_mm"].round(1),
+    })
+    st.dataframe(view, hide_index=True, width="stretch")
+    st.caption(f"Total {df['amount_mm'].sum():,.1f} $M — equals Total COGS for "
+               f"{fy} above. Accounts @ CC_10000; '{queries.COGS_RESIDUAL_LABEL}' is "
+               f"COGS a LOB reports only as the parent (AC_50000), e.g. GCP "
+               f"eliminations (LB_394).")
 
 
 # Named wrappers, one per page: st.Page needs a distinct callable per page.

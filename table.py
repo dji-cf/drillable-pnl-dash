@@ -140,6 +140,7 @@ def _body(
     sections: Sequence[str],
     tooltips: Mapping[tuple[str, str], str],
     drill: Mapping[tuple[str, str], str] | None,
+    cogs: Mapping[tuple[str, str], str] | None = None,
 ) -> str:
     n = len(periods)
     total_cols = 1 + n * (3 if comp else 1)
@@ -184,6 +185,9 @@ def _body(
         title = f' title="{_esc(tip)}"' if tip else ""
         bu = drill.get((row.section, row.label)) if drill else None
         link = f' data-bu="{_esc(bu)}"' if bu else ""
+        cogs_bu = cogs.get((row.section, row.label)) if cogs else None
+        if cogs_bu:
+            link += f' data-cogs="{_esc(cogs_bu)}"'
         out.append(f'<td class="lbl"{link}{title}>{_esc(row.label)}</td>')
 
         fmt = tx.fmt_pct if row.is_pct else tx.fmt_m
@@ -242,6 +246,7 @@ def build_statement(
     sections: Sequence[str] = tx.SECTIONS_WITH_HEADER,
     tooltips: Mapping[tuple[str, str], str] = tx.ROW_TOOLTIPS,
     drill: Mapping[tuple[str, str], str] | None = None,
+    cogs: Mapping[tuple[str, str], str] | None = None,
 ) -> str:
     """The full statement table, ready to mount in the component.
 
@@ -249,7 +254,8 @@ def build_statement(
     a BU page passes its own (bu.rows). ``drill`` maps (section, label) to a BU
     key and puts ``data-bu`` on those label cells, which interactive._JS turns
     into a 'drill' click; with None the markup is the consolidated grid's as
-    it always was.
+    it always was. ``cogs`` does the same for a BU page's "Total COGS" label
+    (``data-cogs``: a 'cogs' click, which opens the COGS child accounts).
 
     Period columns come from the SELECTED FORECAST vintage, as in the deck --
     the comparison is read with those same period keys, so a comparison vintage
@@ -274,6 +280,7 @@ def build_statement(
         forecast=forecast, comp=comp, collapsed=collapsed,
         dimmed=dimmed, delta_mode=delta_mode,
         rows=rows, sections=sections, tooltips=tooltips, drill=drill,
+        cogs=cogs,
     )
     return f'<div class="table-wrap"><table>{head}{body}</table></div>'
 

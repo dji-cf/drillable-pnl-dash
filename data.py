@@ -194,3 +194,18 @@ def load_adj_ebitda_ex_es(scenario: str = "SEP26RF", fiscal_year: str = "FY26") 
     Not caught here, same reason as load_master; financial_app.py shows the error.
     """
     return _q(queries.adj_ebitda_ex_es_sql(scenario, fiscal_year))
+
+
+@st.cache_data(ttl=_CACHE_TTL, show_spinner="Loading COGS detail...")
+def load_cogs_drill(vintage: str, fiscal_year: str, lobs: tuple[str, ...]) -> pd.DataFrame:
+    """A BU's COGS child accounts for one vintage's fiscal year, $M.
+
+    Columns: account, display_label, sort_order, bucket (queries' bucket key),
+    amount_mm. Like load_master, errors are not caught here (nothing cached
+    on failure); the caller shows them.
+    """
+    df = _q(queries.cogs_drill_sql(vintage, fiscal_year, lobs))
+    df["amount_mm"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0) / 1e6
+    df["sort_order"] = pd.to_numeric(df["sort_order"], errors="coerce").astype("Int64")
+    df["bucket"] = df["account"].map(queries.COGS_ACCOUNT_BUCKET)
+    return df.drop(columns="amount")

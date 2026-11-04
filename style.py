@@ -164,9 +164,9 @@ tr.row-ratio td.comp-cell { background: #f5f7fc; }
 /* A consolidated label that opens its BU P&L page (interactive._JS 'drill').
    Only rendered when the component is live, so it never looks clickable on
    the static fallback. */
-td.lbl[data-bu] { cursor: pointer; }
-td.lbl[data-bu]:hover { color: #1d4ed8; text-decoration: underline; }
-td.lbl[data-bu]:hover::after {
+td.lbl[data-bu], td.lbl[data-cogs] { cursor: pointer; }
+td.lbl[data-bu]:hover, td.lbl[data-cogs]:hover { color: #1d4ed8; text-decoration: underline; }
+td.lbl[data-bu]:hover::after, td.lbl[data-cogs]:hover::after {
   content: "\\203A"; margin-left: 6px; text-decoration: none; display: inline-block;
 }
 
