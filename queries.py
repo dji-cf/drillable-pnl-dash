@@ -672,3 +672,48 @@ LEGACY_SQL = MASTER_SQL
 if SOURCE == "STG":
     SEGMENTS = STG_SEGMENTS
     MASTER_SQL = STG_SQL
+
+
+# --------------------------------------------------------------------------
+# Cash Flow tab: Adjusted EBITDA ex Emerging Services
+# --------------------------------------------------------------------------
+# Source = Afriti Rahim email "Re: Cash and Capex Dashboards - Request
+# Received", 2026-11-02 11:41 / 11:44 ET: Revenue - COGS - SG&A for every LOB
+# except Live, Collect and TCG, plus carving out Key Litigation (Pisa legal).
+# Ties to her FY26 SEP26RF 2,169,569,531 USD within 3,168 USD (bridge report
+# docs/fleet/cfd-cash-ebitda-bridge.md, N2). This is NOT the ACX_EBITDA rollup.
+def adj_ebitda_ex_es_sql(scenario: str = "SEP26RF", fiscal_year: str = "FY26") -> str:
+    """One row: lb310, live, collect, tcg, tcg_cc, pisa, adj_ebitda_ex_es (USD)."""
+    return f"""
+WITH b AS (
+    SELECT LOB, ACCOUNT, COST_CENTER, AMOUNT FROM {STG}
+    WHERE SCENARIO = '{scenario}' AND FISCAL_YEAR = '{fiscal_year}' AND PERIOD = 'YearTotal'
+      AND CHANNEL = 'Total Channel' AND PLAN_ELEMENT = 'Total_Budget' AND VERSION = 'Final'
+      AND CURRENCY = 'USD_Reporting'
+      AND ENTITY = '{STG_ENTITY}' AND INTERCOMPANY = '{STG_ICP_TOTAL}'
+      AND LOB IN ('LB_301','LB_302','LB_303','LB_304','LB_305','LB_306','LB_307','LB_308',
+                  'Total - Topps Eliminations')
+),
+l AS (
+    SELECT LOB,
+        SUM(IFF(COST_CENTER = 'Total Cost Center' AND ACCOUNT = 'ACX_Net Revenue', AMOUNT, 0)) rev,
+        SUM(IFF(ACCOUNT LIKE 'ACX%' AND ACCOUNT <> 'ACX_Net Revenue', AMOUNT, 0)) cogs,
+        SUM(IFF(ACCOUNT = 'AC_50000' AND COST_CENTER = 'CC_30000', AMOUNT, 0)) sga,
+        SUM(IFF(ACCOUNT = 'AC_50000' AND COST_CENTER = 'CC_70123', AMOUNT, 0)) tcg_cc,
+        SUM(IFF(ACCOUNT = 'AC_61002' AND COST_CENTER = 'CC_40313', AMOUNT, 0)) pisa
+    FROM b GROUP BY 1
+),
+-- The final sum is an outer SELECT: in one SELECT, tcg_cc / pisa resolve to
+-- l's columns, not the SUM aliases ("not a valid group by expression").
+s AS (
+    SELECT SUM(rev - cogs - sga) lb310,
+           SUM(IFF(LOB = 'LB_306', rev - cogs - sga, 0)) live,
+           SUM(IFF(LOB = 'LB_307', rev - cogs - sga, 0)) collect,
+           SUM(IFF(LOB = 'LB_308', rev - cogs - sga, 0)) tcg,
+           SUM(tcg_cc) tcg_cc, SUM(pisa) pisa
+    FROM l
+)
+SELECT lb310, live, collect, tcg, tcg_cc, pisa,
+       lb310 - live - collect - tcg + tcg_cc + pisa AS adj_ebitda_ex_es
+FROM s
+"""

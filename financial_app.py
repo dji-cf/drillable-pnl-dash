@@ -17,9 +17,11 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 import bu
+import data
 
 # A fresh copy of streamlit_app for every script run, NOT a plain import: an
 # imported module is one object shared by every browser session on the server,
@@ -67,10 +69,40 @@ def home() -> None:
         st.markdown(f"[Balance Sheet notes (Notion)]({BALANCE_SHEET_NOTION})")
 
     with cash:
-        st.info("Coming soon: Cash Flow (Afriti Rahim, Jack Braun)")
+        st.info("Cash Flow (draft) (Afriti Rahim, Jack Braun)")
+        _cash_ebitda_tile()
         st.markdown(f"[Cash Flow notes (Notion)]({CASH_FLOW_NOTION})")
         for label, url in CASH_FLOW_LINKS.items():
             st.markdown(f"- [{label}]({url})")
+
+
+EBITDA_ROWS: list[tuple[str, str, int]] = [
+    ("Collectibles ex Other (LB_310) EBITDA", "lb310", 1),
+    ("less Fanatics Live (LB_306)", "live", -1),
+    ("less Collect / Marketplace (LB_307)", "collect", -1),
+    ("less Trading Card Games (LB_308)", "tcg", -1),
+    ("TCG cost center CC_70123 (carve-out)", "tcg_cc", 1),
+    ("carve out Key Litigation and Regulatory (CC_40313 / AC_61002)", "pisa", 1),
+    ("= Adjusted EBITDA ex Emerging Services", "adj_ebitda_ex_es", 1),
+]
+
+
+def _cash_ebitda_tile() -> None:
+    """Afriti's FY26 Adjusted EBITDA ex Emerging Services (not ACX_EBITDA)."""
+    try:
+        row = data.load_adj_ebitda_ex_es("SEP26RF", "FY26").iloc[0]
+    except Exception as e:
+        st.warning(f"Adjusted EBITDA ex Emerging Services could not load: {e}")
+        return
+    total = float(row["adj_ebitda_ex_es"]) / 1e6
+    st.metric("Adjusted EBITDA ex Emerging Services - FY26 (Sep 2026 forecast, SEP26RF)",
+              f"${total:,.1f}M")
+    st.table(pd.DataFrame({
+        "Line": [label for label, _, _ in EBITDA_ROWS],
+        "$M": [f"{sign * float(row[col]) / 1e6:,.1f}" for _, col, sign in EBITDA_ROWS],
+    }).set_index("Line"))
+    st.caption("Recipe from Afriti Rahim (FP&A), 2026-11-02. Source: "
+               "ORACLE_DATA_PROD.FCT_EPM.CARDPLN_PL_BY_LOB_STG. Not ACX_EBITDA.")
 
 
 def _bu_wrapper(key: str):

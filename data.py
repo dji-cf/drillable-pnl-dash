@@ -185,3 +185,12 @@ def load_master() -> tuple[pd.DataFrame, datetime]:
         df[col] = df[col].astype(str)
 
     return df, pulled_at
+
+
+@st.cache_data(ttl=_CACHE_TTL, show_spinner="Loading Adjusted EBITDA...")
+def load_adj_ebitda_ex_es(scenario: str = "SEP26RF", fiscal_year: str = "FY26") -> pd.DataFrame:
+    """Cash Flow tab: Afriti's Adjusted EBITDA ex Emerging Services, one row.
+
+    Not caught here, same reason as load_master; financial_app.py shows the error.
+    """
+    return _q(queries.adj_ebitda_ex_es_sql(scenario, fiscal_year))

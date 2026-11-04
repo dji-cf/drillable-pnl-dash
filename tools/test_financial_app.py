@@ -24,6 +24,14 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 from streamlit.util import calc_hash  # noqa: E402
 
 import bu  # noqa: E402
+import data  # noqa: E402
+import pandas as pd  # noqa: E402
+import queries  # noqa: E402
+
+#: The bridge report's N2 values, so the Cash Flow tile needs no Snowflake.
+BRIDGE = dict(lb310=2099969200, live=-29810853, collect=19665525, tcg=-9764159,
+              tcg_cc=760006, pisa=48934006, adj_ebitda_ex_es=2169572699)
+data.load_adj_ebitda_ex_es = lambda *a, **k: pd.DataFrame([BRIDGE])
 
 APP = ROOT / "financial_app.py"
 TABS = ["Income Statement", "Balance Sheet", "Cash Flow"]
@@ -81,8 +89,23 @@ def main() -> None:
         print(f"cash flow link {label!r}: {'ok' if ok else 'MISSING'}")
         if not ok:
             problems.append(f"Cash Flow link {label} missing")
+    # Afriti: "we aren't including any add-backs" (2026-11-02 11:41 ET).
+    rows = [str(i) for t in by_label["Cash Flow"].table for i in t.value.index]
+    print("cash flow table rows:", rows)
+    if not rows or any("add back" in r.lower() for r in rows):
+        problems.append(f"Cash Flow table has no rows or an 'add back' label: {rows}")
+    metrics = [m.value for m in by_label["Cash Flow"].metric]
+    print("cash flow metrics:", metrics)
+    if not any("2,169.6" in m for m in metrics):
+        problems.append(f"Cash Flow metric 2,169.6 missing: {metrics}")
+    sql = queries.adj_ebitda_ex_es_sql()
+    sql_ok = all(x in sql for x in ("CARDPLN_PL_BY_LOB_STG", "SEP26RF", "FY26")) \
+        and "ACX_EBITDA" not in sql
+    print(f"adj_ebitda_ex_es_sql: {'ok' if sql_ok else 'BAD'}")
+    if not sql_ok:
+        problems.append("adj_ebitda_ex_es_sql() is not STG/SEP26RF/FY26 or uses ACX_EBITDA")
     for tab, who in [("Balance Sheet", "Tara Petrucci"),
-                     ("Cash Flow", "Afriti Rahim, Jack Braun")]:
+                     ("Cash Flow", "Cash Flow (draft) (Afriti Rahim, Jack Braun)")]:
         if not any(who in x.value for x in by_label[tab].info):
             problems.append(f"tab {tab}: info with {who!r} missing")
     # SG&A Detail sub-tab: the report table renders with its total row.
