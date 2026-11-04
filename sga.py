@@ -82,6 +82,9 @@ SUBTOTALS = (
     ("Total Technology", 28, 31),
     ("Total Other/Miscellaneous", 32, 52),
 )
+#: Display-only partial subtotal inside Total Compensation (template r17,
+#: =SUM(N13:N16); Maya yes 2026-11-04). Not part of SUBTOTALS or any total.
+PRE_ALLOC = ("Compensation (Pre-Allocations)", 1, 4)
 
 SQL = f"""
 SELECT LOB, SCENARIO, FISCAL_YEAR AS YEAR, PERIOD, ACCOUNT, COST_CENTER,
@@ -148,7 +151,7 @@ def report(df: pd.DataFrame, lob: str, scenario: str, year: str) -> pd.DataFrame
     shown = []
     for i, line in enumerate(ordered, start=1):
         shown.append(p.loc[[line]])
-        for name, first, last in SUBTOTALS:
+        for name, first, last in (PRE_ALLOC, *SUBTOTALS):
             if last == i:
                 sub = p.loc[ordered[first - 1:last]].sum()
                 shown.append(sub.to_frame(name).T)
@@ -190,7 +193,7 @@ def render() -> None:
                         index=years.index(DEFAULT_YEAR) if DEFAULT_YEAR in years else 0)
 
     st.dataframe(report(df, lob, scenario, year).style.format("{:,.2f}"),
-                 use_container_width=True, height=35 * 65)
+                 use_container_width=True, height=35 * 66)
     st.caption("Mapping = Will Oswald's SGA Template Mapping.xlsx (2026-10-14). "
                "LOBs LB_303, LB_305-LB_308 show large 'Not mapped' amounts "
                "until Will maps the _Other accounts.")

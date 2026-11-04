@@ -116,7 +116,64 @@ Labels:
 - Rename, template order, 6 subtotals, all numbers unchanged: **CONFIRMED** (output above).
 - The order matches the xlsx: **CONFIRMED** (updated 2026-11-03, self-check). openpyxl read of sheet "NASE Total" column M rows 13-74: the 52 lines match `sga.TEMPLATE_ORDER` in order. The subtotal rows are at r19, r31, r38, r45, r51 and r74, as in the instruction.
 - Two template rows that the instruction does not cover (self-check, 2026-11-03). Not built; Will or Maya must decide:
-  - r17 "Compensation (Pre-Allocations)": it sits between the lines and "Total Compensation" (r19). It is probably a subtotal of lines 1-4 (Salaries - Base Salaries .. Benefits), but I did not read its formula. Not in the tab.
+  - r17 "Compensation (Pre-Allocations)": (updated 2026-11-04) now in the tab, see Follow-up 2.
   - r70 "Contingency": a template line inside "Total Other/Miscellaneous". It is not in Will's mapping file (AC_61627 Contingency is one of the open accounts), so its amount shows in "Not mapped". "Total Other/Miscellaneous" in the tab therefore does not include Contingency.
 - Full-app AppTest (`tools/test_financial_app.py`): **I DON'T KNOW**. Not re-run; the xlsxwriter problem in this Python is still there (section 2).
-- Note: `sga.py:193` and `:201` use `use_container_width`. Streamlit 1.62 warns that this is deprecated. It works now. Not changed.
+- Note: `sga.py:196` and `:204` (line refs updated 2026-11-04) use `use_container_width`. Streamlit 1.62 warns that this is deprecated. It works now. Not changed.
+
+## Follow-up 2 (updated 2026-11-04)
+
+WHY: Maya said yes (thread, 2026-11-04 09:20:50) to (1) add Will's template row r17 "Compensation (Pre-Allocations)" and (2) keep the `tools/preflight_artifacts.py:55-69` change from commit 066c9af as it is. Maya runs the full-app test from `.venv` herself.
+Source: `SG&A Consolidated - 2027 Bud (1st Sub).xlsx`, sheet "NASE Total", column M r17, formula `=SUM(N13:N16)` = LINE_ORDER 1-4 (fact from the instruction).
+
+What changed:
+
+| File:line | Change |
+|---|---|
+| `sga.py:85-87` | New `PRE_ALLOC = ("Compensation (Pre-Allocations)", 1, 4)`. Display only. It is NOT in `SUBTOTALS` (the 6 subtotals are unchanged) and NOT in any total. |
+| `sga.py:154` | `report()` loops over `(PRE_ALLOC, *SUBTOTALS)`, so the row shows after Benefits (line 4) and before Allocated Compensation (line 5). "Total SG&A (template)" is still the sum of the 52 lines + Not mapped (`sga.py:147-148`, unchanged; line ref corrected 2026-11-04 self-check). |
+| `sga.py:196` | Table height 35 x 66 (63 rows now). |
+| `tools/test_sga_numbers.py:40-55` | Expects 63 rows. Checks that the row is between Benefits and Allocated Compensation and that it equals the sum of lines 1-4. |
+
+Not changed: `reference/sga_mapping.csv`, `tools/preflight_artifacts.py`, `financial_app.py`, `snowflake.yml`, `streamlit_app.py`, `export.py`. `git status` shows only `sga.py`, `tools/test_sga_numbers.py` and this file.
+
+Test output (`python3 tools/test_sga_numbers.py`, 2026-11-04):
+
+```
+rows in table: 63 (52 Will + 6 subtotals + Pre-Allocations + Not mapped + total + Key Litigation and Regulatory + check)
+52 lines in template order: True
+'Compensation (Pre-Allocations)' between Benefits and Allocated Compensation: True
+subtotal Compensation (Pre-Allocations) (lines 1-4)          82,215,347.56  ok
+subtotal Total Compensation                                  82,215,347.56  ok
+subtotal Total Professional Services and Outside Services      18,207,923.54  ok
+subtotal Total Travel and Entertainment                       5,549,884.54  ok
+subtotal Total Rent and Office                                6,389,111.92  ok
+subtotal Total Technology                                    12,280,587.33  ok
+subtotal Total Other/Miscellaneous                          189,939,435.70  ok
+6 subtotals + Marketing + Not mapped = template total       402,433,283.86  ok
+LB_302 SEP26RF FY26 template total                          402,433,283.86  ok
+LB_302 SEP26RF FY26 Key Litigation                            2,778,538.51  ok
+LB_302 SEP26RF FY26 Oracle total                            405,211,822.37  ok
+LB_302 SEP26RF FY26 check row (FY)                                    0.00  ok
+LB_302 SEP26RF FY26 check row (worst month, abs)                      0.00  ok
+LB_302 SEP26RF FY26 Not mapped                                        0.00  ok
+LB_302 2027B-09.28 FY27 Oracle total                        483,119,838.51  ok
+Not mapped FY27 2027B-09.28: LB_301 0.00, LB_302 188,000.00, LB_303 34,561,724.22, LB_304 0.00,
+  LB_305 9,827,811.41, LB_306 84,972,355.48, LB_307 43,024,723.29, LB_308 16,898,596.53 -- all ok, check row 0.00 each
+OK -- sga.py ties
+
+AppTest sga.render(): exception=none, rows=63, total row shown=True, 'Key Litigation and Regulatory' shown=True
+first 8 rows: ['Salaries - Base Salaries', 'Severance', 'Bonus Expense', 'Benefits', 'Compensation (Pre-Allocations)',
+               'Allocated Compensation', 'Total Compensation', 'Legal & Litigation']
+subtotal rows (0-based): (6, Total Compensation), (16, Total Professional Services and Outside Services),
+  (23, Total Travel and Entertainment), (30, Total Rent and Office), (36, Total Technology), (58, Total Other/Miscellaneous)
+last 4 rows: ['Not mapped', 'Total SG&A (template)', 'Key Litigation and Regulatory', 'Check vs Oracle total (AC_50000 @ CC_30000)']
+```
+
+`python3 tools/preflight_artifacts.py`: `OK -- every artifact exists and every top-level module ships`.
+
+Labels:
+- The new row is in the right place and equals lines 1-4. All numbers are unchanged, preflight is OK and the SG&A AppTest passes: **CONFIRMED** (output above).
+- For LB_302 / SEP26RF / FY26, Pre-Allocations = Total Compensation = 82,215,347.56. So Allocated Compensation is 0.00 in this slice: **CONFIRMED** (output above, and an independent SQL `01c83000-031a-3f52-69de-0701a145c96f` (updated 2026-11-04, self-check): lines 1-4 = 82,215,347.56, Allocated Compensation accounts = 0). I did not check other LOBs or years line by line.
+- The r17 formula `=SUM(N13:N16)`: **CONFIRMED** (updated 2026-11-04, self-check). I read the formulas with openpyxl (read only): M17 "Compensation (Pre-Allocations)" has `=SUM(N13:N16)` (Salaries .. Benefits). M19 "Total Compensation" has `=N17+N18`.
+- Full-app AppTest: I did not run it (Maya runs it from `.venv`): **I DON'T KNOW**.

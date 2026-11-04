@@ -37,14 +37,22 @@ def main() -> None:
             problems.append(label)
 
     r = sga.report(df, "LB_302", "SEP26RF", "FY26")
-    print(f"rows in table: {len(r)} (52 Will + 6 subtotals + Not mapped + total "
-          f"+ {sga.KEY_LIT} + check)")
-    if len(r) != 62:
-        problems.append(f"table has {len(r)} rows, not 62")
+    print(f"rows in table: {len(r)} (52 Will + 6 subtotals + Pre-Allocations + "
+          f"Not mapped + total + {sga.KEY_LIT} + check)")
+    if len(r) != 63:
+        problems.append(f"table has {len(r)} rows, not 63")
     order = [x for x in r.index if x in sga.TEMPLATE_ORDER]
     print(f"52 lines in template order: {order == list(sga.TEMPLATE_ORDER)}")
     if order != list(sga.TEMPLATE_ORDER):
         problems.append("lines are not in template order")
+    pre, first, last = sga.PRE_ALLOC
+    idx = list(r.index)
+    pos_ok = idx[idx.index(pre) - 1] == "Benefits" and idx[idx.index(pre) + 1] == "Allocated Compensation"
+    print(f"{pre!r} between Benefits and Allocated Compensation: {pos_ok}")
+    if not pos_ok:
+        problems.append(f"{pre} is not between Benefits and Allocated Compensation")
+    check(f"subtotal {pre} (lines 1-4)", r.loc[pre, FY],
+          r.loc[list(sga.TEMPLATE_ORDER[first - 1:last]), FY].sum())
     for name, first, last in sga.SUBTOTALS:
         want = r.loc[list(sga.TEMPLATE_ORDER[first - 1:last]), FY].sum()
         check(f"subtotal {name}", r.loc[name, FY], want)
