@@ -1,0 +1,438 @@
+"""Offline checks of the vintage rules -- labels, ordering, retirement, YTD.
+
+No Snowflake. Builds a cube from a synthetic frame shaped like MASTER_SQL's
+output, at two points in time, so the year-boundary behaviour can be asserted
+today rather than discovered in January:
+
+  OCT 2026   2025A complete, 2026A partial (Jan-Aug), 2026B, an FY25 forecast,
+             and the Aug/Sep 2026 FCs.
+  JAN 2027   2026A now complete, 2027B landed, the first FY27 forecast either
+             absent (the gap week) or present.
+
+    .venv\\Scripts\\python.exe tools\\test_vintages.py
+"""
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import pandas as pd  # noqa: E402
+
+import export  # noqa: E402
+import queries  # noqa: E402
+import table  # noqa: E402
+import transforms as tx  # noqa: E402
+
+#: (key, scenario_label, fiscal_year, months present, months actual)
+Vintage = tuple[str, str, str, int, int]
+
+
+def _frame(vintages: list[Vintage]) -> pd.DataFrame:
+    """MASTER_SQL-shaped rows. Every segment of month m is worth m * $1M, so a
+    YTD is a triangular number and an annual total is 78 (x $1M)."""
+    recs = []
+    for key, label, fy, n_months, n_actual in vintages:
+        months = tx.MONTHS[:n_months]
+        for line in queries.PL_LINES.values():
+            def rec(ptype: str, period: str, amount: float, actual) -> dict:
+                r = {"vintage_key": key, "scenario_label": label, "fiscal_year": fy,
+                     "period": period, "period_type": ptype, "pl_line": line,
+                     "is_actual_month": actual}
+                r.update({f"seg_{k}": amount for k in queries.SEGMENTS})
+                return r
+            for i, m in enumerate(months, start=1):
+                recs.append(rec("MONTH", m, i * 1e6, i <= n_actual))
+            for q, qm in tx.QUARTER_MONTHS.items():
+                present = [tx.MONTHS.index(m) + 1 for m in qm if m in months]
+                if present:
+                    recs.append(rec("QUARTER", q, sum(present) * 1e6, None))
+            recs.append(rec("YEAR", "YearTotal",
+                            sum(range(1, n_months + 1)) * 1e6, None))
+    df = pd.DataFrame(recs)
+    df["is_actual_month"] = df["is_actual_month"].astype("boolean")
+    return df
+
+
+OCT_2026: list[Vintage] = [
+    ("2025A", "ACTUAL", "FY25", 12, 12),
+    ("2026A", "ACTUAL", "FY26", 8, 8),
+    ("2026B", "BUDGET", "FY26", 12, 0),
+    ("Dec 2025 FC", "FORECAST", "FY25", 12, 11),
+    ("Aug 2026 FC", "FORECAST", "FY26", 12, 7),
+    ("Sep 2026 FC", "FORECAST", "FY26", 12, 8),
+]
+
+JAN_2027_NO_FC: list[Vintage] = [
+    ("2025A", "ACTUAL", "FY25", 12, 12),
+    ("2026A", "ACTUAL", "FY26", 12, 12),
+    ("2026B", "BUDGET", "FY26", 12, 0),
+    ("2027B", "BUDGET", "FY27", 12, 0),
+    ("Sep 2026 FC", "FORECAST", "FY26", 12, 8),
+    ("Dec 2026 FC", "FORECAST", "FY26", 12, 11),
+]
+
+JAN_2027 = JAN_2027_NO_FC + [("Jan 2027 FC", "FORECAST", "FY27", 12, 0),
+                             ("Feb 2027 FC", "FORECAST", "FY27", 12, 1)]
+
+
+def check(problems: list[str], cond: bool, msg: str) -> None:
+    if not cond:
+        problems.append(msg)
+
+
+def check_labels() -> list[str]:
+    p: list[str] = []
+    for key, want in (("2025A", "2025 Actuals"), ("2026B", "2026 Budget"),
+                      ("2031A", "2031 Actuals"), ("Sep 2026 FC", "Sep 2026 FC"),
+                      ("Jan 2027 FC", "Jan 2027 FC")):
+        check(p, tx.vintage_label(key) == want,
+              f"vintage_label({key!r}) = {tx.vintage_label(key)!r}, want {want!r}")
+    for key in ("2025A", "2026A", "2026B"):
+        check(p, "(PY)" not in tx.vintage_label(key) and "partial" not in
+              tx.vintage_label(key).lower(), f"{key} label carries a relative qualifier")
+    check(p, tx.change_label("Aug 2026 FC") == "Change vs. Aug 2026 FC",
+          f"change_label: {tx.change_label('Aug 2026 FC')!r}")
+    check(p, tx.change_label("2025A") == "Change vs. 2025 Actuals",
+          f"change_label: {tx.change_label('2025A')!r}")
+    check(p, tx.vintage_parts("Jul. FC") is None, "old key format still parses")
+    check(p, tx.vintage_label("Jul. FC") == "Jul. FC", "unknown key not passed through")
+    check(p, tx.vintage_color("Sep 2026 FC") == tx.vintage_color("Sep 2027 FC"),
+          "forecast color should follow as-of month")
+    check(p, tx.vintage_color("2025A") != tx.vintage_color("2026A"),
+          "adjacent Actuals years share a color")
+    # A1: the deck's "Total ex-Emerging Svcs" reads "Subtotal" in all 3 sections.
+    for sec in tx.SECTIONS_WITH_HEADER:
+        check(p, any(r.section == sec and r.label == "Subtotal" for r in tx.ROWS),
+              f"no Subtotal row in {sec}")
+        check(p, (sec, "Subtotal") in tx.ROW_TOOLTIPS, f"Subtotal in {sec} has no tooltip")
+    check(p, not any("ex-Emerging" in r.label + r.metric_label for r in tx.ROWS),
+          "a row is still labelled ex-Emerging")
+    return p
+
+
+def check_ordering() -> list[str]:
+    p: list[str] = []
+    keys = ["Jan 2027 FC", "2026B", "Dec 2026 FC", "2027B", "2025A", "Sep 2026 FC",
+            "2026A"]
+    got = tx.order_vintages(keys)
+    want = ["2025A", "2026A", "2026B", "2027B", "Sep 2026 FC", "Dec 2026 FC",
+            "Jan 2027 FC"]
+    check(p, got == want, f"order_vintages: {got}")
+    check(p, tx.order_vintages(["x", "2025A", "y"]) == ["2025A", "x", "y"],
+          "unknown keys should sort last, in input order")
+    return p
+
+
+def check_oct_2026() -> list[str]:
+    p: list[str] = []
+    cube = tx.build_cube(_frame(OCT_2026))
+
+    check(p, cube.final_years == frozenset({"FY25"}), f"final_years {cube.final_years}")
+    check(p, cube.is_retired("Dec 2025 FC"), "FY25 forecast not retired")
+    check(p, not cube.is_retired("2025A"), "Actuals must never retire")
+    check(p, not cube.is_retired("2026B"), "open-year Budget retired")
+
+    vis = cube.visible()
+    check(p, "2026A" not in vis, "partial-year Actuals offered")
+    check(p, "Dec 2025 FC" not in vis, "retired forecast offered by default")
+    check(p, "Dec 2025 FC" in cube.visible(include_retired=True), "toggle does not restore")
+    check(p, "2026A" not in cube.visible(include_retired=True),
+          "toggle restored partial Actuals")
+
+    fc = tx.forecast_options(cube)
+    check(p, fc == ["Sep 2026 FC", "Aug 2026 FC"], f"forecast_options {fc}")
+    check(p, tx.forecast_options(cube, True) == ["Sep 2026 FC", "Aug 2026 FC",
+                                                 "Dec 2025 FC"],
+          f"forecast_options(retired) {tx.forecast_options(cube, True)}")
+    comp = tx.comp_options(cube, "Sep 2026 FC")
+    check(p, comp == ["", "2026B", "2025A", "Aug 2026 FC"], f"comp_options {comp}")
+    # A10: an earlier forecast never compares to a later one.
+    comp = tx.comp_options(cube, "Aug 2026 FC")
+    check(p, comp == ["", "2026B", "2025A"], f"comp_options(Aug) {comp}")
+    # A10: no forecast / Budget of another year, even with retired shown.
+    comp = tx.comp_options(cube, "Sep 2026 FC", include_retired=True)
+    check(p, comp == ["", "2026B", "2025A", "Aug 2026 FC"],
+          f"comp_options(retired) {comp}")
+    comp = tx.comp_options(cube, "2026B")
+    check(p, comp == ["", "2025A"], f"comp_options(2026B) {comp}")
+    comp = tx.comp_options(cube, "Dec 2025 FC", include_retired=True)
+    check(p, "2026B" not in comp and "Sep 2026 FC" not in comp,
+          f"FY25 forecast offered an FY26 comparison {comp}")
+    check(p, tx.resolve_comp("Sep 2026 FC", "Aug 2026 FC",
+                             tx.comp_options(cube, "Aug 2026 FC")) == "",
+          "a now-disallowed stored comparison did not reset")
+
+    # A8: no YTD column at annual / quarterly / monthly; YTD is its own View.
+    for grain, n in (("annual", 1), ("quarterly", 5), ("monthly", 13)):
+        periods = cube.periods("Sep 2026 FC", grain)
+        check(p, len(periods) == n, f"{grain}: {len(periods)} periods, want {n}")
+        check(p, not any(tx.is_ytd(pk) for pk, _ in periods),
+              f"{grain}: still has a YTD column")
+    check(p, cube.periods("Sep 2026 FC", "ytd") == [("YTD:Aug", "YTD Aug 26A")],
+          f"ytd view {cube.periods('Sep 2026 FC', 'ytd')}")
+    # Reference block is read at the same keys: YTD Aug of 2025A, not FY25.
+    check(p, cube.period_label("2025A", "YTD:Aug") == "YTD Aug 25A",
+          f"comp YTD label {cube.period_label('2025A', 'YTD:Aug')}")
+    # No YTD in the vintage -> its FY column, labelled as FY.
+    check(p, cube.periods("2026B", "ytd") == [(tx.ANNUAL, "FY 2026B")],
+          f"budget ytd view {cube.periods('2026B', 'ytd')}")
+    html = table.build_statement(cube, forecast="Sep 2026 FC", comp="2025A",
+                                 grain="ytd", collapsed={})
+    check(p, "YTD Aug 26A" in html and "YTD Aug 25A" in html,
+          "ytd view grid lacks main / reference YTD headers")
+    frame = export.statement_frame(cube, forecast="Sep 2026 FC", comp="2025A",
+                                   grain="ytd")
+    check(p, frame.shape == (len(tx.ROWS), 4 + 3), f"ytd export shape {frame.shape}")
+    check(p, cube.ytd_period("2026B") is None, "Budget got a YTD column")
+    check(p, cube.ytd_period("2025A") is None, "complete Actuals got a YTD column")
+
+    rev = tx.ROWS[6]                                   # Total Revenue
+    n_terms = len(queries.STG_ROW_MAP[(rev.section, rev.label)]) \
+        if queries.SOURCE == "STG" else 3
+    want_ytd = sum(range(1, 9)) * 1e6 * n_terms        # Jan..Aug
+    got_ytd = cube.value("Sep 2026 FC", rev, "YTD:Aug")
+    check(p, got_ytd is not None and abs(got_ytd - want_ytd) < 1e-6,
+          f"YTD revenue {got_ytd} != {want_ytd}")
+    check(p, cube.value("2026B", rev, "YTD:Aug") == got_ytd,
+          "comparison YTD not summed over the forecast's months")
+    full = cube.value("2025A", rev, "YTD:Dec")
+    check(p, full == cube.value("2025A", rev, tx.ANNUAL), "YTD:Dec != annual")
+    margin = next(r for r in tx.ROWS if r.is_pct)
+    check(p, cube.value("Sep 2026 FC", margin, "YTD:Aug") is not None,
+          "margin YTD missing")
+
+    # Greying: same year's actuals on both sides only.
+    for pk, want in (("Jul", True), ("Aug", False), ("Q2", True), ("Q3", False),
+                     ("YTD:Aug", False), (tx.ANNUAL, False)):
+        got = cube.same_actuals("Sep 2026 FC", "Aug 2026 FC", pk)
+        check(p, got == want, f"same_actuals(Sep FC, Aug FC, {pk}) = {got}")
+    check(p, not cube.same_actuals("Sep 2026 FC", "2026B", "Jan"), "Budget greyed")
+    check(p, not cube.same_actuals("Sep 2026 FC", "2025A", "Jan"), "prior year greyed")
+
+    html = table.build_statement(cube, forecast="Sep 2026 FC", comp="Aug 2026 FC",
+                                 grain="monthly", collapsed={})
+    check(p, "Change vs. Aug 2026 FC" in html, "change header missing")
+    check(p, "Period-over-Period" not in html, "old change header still rendered")
+    # Jan-Jul greyed on every derivable row (a LEGACY placeholder row keeps its
+    # plain em-dash: it has no figure on either side to be "the same").
+    want = 7 * sum(1 for r in tx.ROWS if r.is_derivable)
+    check(p, html.count("gact") == want,
+          f"{html.count('gact')} greyed cells, want {want}")
+    check(p, html.count("ph-act") == 7, f"{html.count('ph-act')} greyed headers")
+    html_b = table.build_statement(cube, forecast="Sep 2026 FC", comp="2026B",
+                                   grain="monthly", collapsed={})
+    check(p, "gact" not in html_b, "vs. Budget greyed a cell")
+
+    # The % / $ toggle sits in the change header and marks the active mode.
+    check(p, 'Change vs. Aug 2026 FC<span class="dmode"' in html,
+          "toggle not in the change header")
+    check(p, 'data-mode="pct" class="on"' in html, "pct not marked active")
+    usd = table.build_statement(cube, forecast="Sep 2026 FC", comp="Aug 2026 FC",
+                                grain="annual", collapsed={}, delta_mode="usd")
+    check(p, 'data-mode="usd" class="on"' in usd and 'data-mode="pct" class="on"'
+          not in usd, "usd not marked active")
+    solo = table.build_statement(cube, forecast="Sep 2026 FC", comp="",
+                                 grain="annual", collapsed={})
+    check(p, "dmode" not in solo, "toggle rendered with no comparison")
+    return p
+
+
+def _tier(html: str, cls: str) -> list[str]:
+    """The period headers of one header tier ('ph-comp', 'ph-curr', ...)."""
+    return re.findall(rf'<th class="{cls}[^"]*"[^>]*>([^<]*)</th>', html)
+
+
+def check_period_labels() -> list[str]:
+    """A9: mixed and partial quarters, and each block labelled as its own vintage."""
+    p: list[str] = []
+    cube = tx.build_cube(_frame(OCT_2026))
+    fc, en = "Sep 2026 FC", tx.EN_DASH
+
+    got = [lbl for _, lbl in cube.periods(fc, "quarterly")]
+    check(p, got == ["Q1 26A", "Q2 26A", "Q3 26A+F", "Q4 26F", "FY 2026F"],
+          f"{fc} quarterly labels {got}")
+    for vintage, pk, want in (
+        ("Aug 2026 FC", "Q3", "Q3 26A+F"),          # Jul actual, Aug-Sep forecast
+        ("Aug 2026 FC", "Aug", "Aug 26F"),
+        ("Aug 2026 FC", "YTD:Aug", "YTD Aug 26A+F"),
+        ("Aug 2026 FC", tx.ANNUAL, "FY 2026F"),     # FY never takes A+F
+        ("2026B", "Q3", "Q3 26B"),
+        ("2025A", "Q3", "Q3 25A"),
+        ("2025A", tx.ANNUAL, "FY 2025A"),
+        ("2026A", "Q3", f"Q3 26A (Jul{en}Aug)"),    # partial: Jul + Aug only
+        ("2026A", "Q2", "Q2 26A"),
+    ):
+        got = cube.period_label(vintage, pk)
+        check(p, got == want, f"period_label({vintage!r}, {pk!r}) = {got!r}, want {want!r}")
+    for vintage, pk, want in (
+        (fc, "Q3", f"Jul{en}Aug actual, Sep forecast"),
+        (fc, tx.ANNUAL, f"Jan{en}Aug actual, Sep{en}Dec forecast"),
+        (fc, "Q2", None),
+        (fc, "Sep", None),
+        ("2026A", "Q3", f"Jul{en}Aug only"),
+        ("2026B", "Q3", None),
+        ("2025A", tx.ANNUAL, None),
+    ):
+        got = cube.period_note(vintage, pk)
+        check(p, got == want, f"period_note({vintage!r}, {pk!r}) = {got!r}, want {want!r}")
+
+    html = table.build_statement(cube, forecast=fc, comp="2025A", grain="quarterly",
+                                 collapsed={})
+    comp, curr = _tier(html, "ph-comp"), _tier(html, "ph-curr")
+    check(p, comp == ["Q1 25A", "Q2 25A", "Q3 25A", "Q4 25A", "FY 2025A"],
+          f"vs 2025A: comparison headers {comp}")
+    check(p, curr == ["Q1 26A", "Q2 26A", "Q3 26A+F", "Q4 26F", "FY 2026F"],
+          f"vs 2025A: forecast headers {curr}")
+    check(p, _tier(html, "ph-growth") == curr, "change block lost the forecast's labels")
+    check(p, f'title="Jul{en}Aug actual, Sep forecast">Q3 26A+F<' in html,
+          "mixed quarter header has no hover note")
+
+    monthly = table.build_statement(cube, forecast=fc, comp="Aug 2026 FC", grain="monthly",
+                                    collapsed={})
+    comp, curr = _tier(monthly, "ph-comp"), _tier(monthly, "ph-curr")
+    check(p, comp[6:8] == ["Jul 26A", "Aug 26F"] and curr[6:8] == ["Jul 26A", "Aug 26A"],
+          f"vs Aug FC: Jul/Aug headers {comp[6:8]} / {curr[6:8]}")
+
+    frame = export.statement_frame(cube, forecast=fc, comp="2025A", grain="quarterly")
+    for col in ("2025 Actuals | FY 2025A", "Sep 2026 FC | Q3 26A+F",
+                "Change vs. 2025 Actuals | Q3 26A+F"):
+        check(p, col in frame.columns, f"export lacks column {col!r}")
+    return p
+
+
+def check_jan_2027() -> list[str]:
+    p: list[str] = []
+    gap = tx.build_cube(_frame(JAN_2027_NO_FC))
+    check(p, gap.final_years == frozenset({"FY25", "FY26"}), f"{gap.final_years}")
+    for v in ("2026B", "Sep 2026 FC", "Dec 2026 FC"):
+        check(p, gap.is_retired(v), f"{v} not retired once FY26 is final")
+    check(p, "2026A" in gap.visible(), "completed FY26 Actuals not offered")
+    check(p, tx.forecast_options(gap) == ["2027B"],
+          f"gap-week fallback {tx.forecast_options(gap)}")
+
+    cube = tx.build_cube(_frame(JAN_2027))
+    fc = tx.forecast_options(cube)
+    check(p, fc == ["Feb 2027 FC", "Jan 2027 FC"], f"forecast_options {fc}")
+    comp = tx.comp_options(cube, "Feb 2027 FC")
+    check(p, comp == ["", "2027B", "2026A", "Jan 2027 FC"],
+          f"comp_options {comp}")
+    check(p, cube.year("Feb 2027 FC") == "2027", "header year")
+    check(p, cube.periods("Feb 2027 FC", "ytd") == [("YTD:Jan", "YTD Jan 27A")],
+          f"{cube.periods('Feb 2027 FC', 'ytd')}")
+    check(p, cube.ytd_period("Jan 2027 FC") is None, "no closed month, still a YTD")
+    # Prior-year comparison is a real variance, never greyed.
+    check(p, not cube.same_actuals("Feb 2027 FC", "2026A", "Jan"), "PY greyed")
+    return p
+
+
+def check_delta_modes() -> list[str]:
+    p: list[str] = []
+    cases = [
+        ((142e6, 100e6, False, True, "pct"), "+42%", "gpos"),
+        ((142e6, 100e6, False, True, "usd"), "+$42", "gpos"),
+        ((95e6, 100e6, False, True, "usd"), "($5)", "gneg"),
+        ((100.3e6, 100e6, False, True, "usd"), "$0", "gflat"),
+        ((100e6, 0.0, False, True, "usd"), "+$100", "gpos"),
+        ((100e6, 0.0, False, True, "pct"), tx.EM_DASH, "gflat"),
+        ((0.5476, 0.4617, True, True, "usd"), "+859 bps", "gpos"),
+        ((0.5476, 0.4617, True, True, "pct"), "+859 bps", "gpos"),
+    ]
+    for args, text, cls in cases:
+        got = tx.delta_fmt(*args)
+        check(p, got == {"text": text, "cls": cls}, f"delta_fmt{args} = {got}")
+    tile = tx.delta_fmt(-120e6, 0.0, False, mode="usd", usd_suffix="M")
+    check(p, tile and tile["text"] == "($120M)", f"tile usd {tile}")
+    check(p, tx.delta_value(142.0, 100.0, False) == 0.42, "delta_value pct")
+    check(p, tx.delta_value(142.0, 100.0, False, "usd") == 42.0, "delta_value usd")
+    return p
+
+
+def check_trends() -> list[str]:
+    """The vintage rules behind the Trends charts, and the bridge arithmetic."""
+    p: list[str] = []
+    cube = tx.build_cube(_frame(OCT_2026))
+    fc = "Sep 2026 FC"
+
+    got = tx.outlook_vintages(cube, fc)
+    check(p, got == ["2026B", "Aug 2026 FC", "Sep 2026 FC"], f"outlook_vintages {got}")
+    check(p, tx.outlook_vintages(cube, "Aug 2026 FC") == got,
+          "an older forecast truncated the year")
+    check(p, tx.outlook_vintages(cube, "Dec 2025 FC", True) == ["Dec 2025 FC"],
+          f"FY25 outlook {tx.outlook_vintages(cube, 'Dec 2025 FC', True)}")
+    check(p, tx.prior_forecast(cube, fc) == "Aug 2026 FC", "prior_forecast")
+    check(p, tx.prior_forecast(cube, "Aug 2026 FC") is None,
+          "first forecast of the year has a prior")
+    check(p, tx.year_budget(cube, fc) == "2026B", "year_budget")
+    check(p, tx.year_budget(cube, "Dec 2025 FC") is None, "FY25 has no budget here")
+    check(p, tx.prior_year_actuals(cube, fc) == "2025A", "prior_year_actuals")
+    check(p, tx.prior_year_actuals(cube, "Dec 2025 FC") is None,
+          "2024A is not in the cube")
+    check(p, tx.default_lines(cube, fc, "") == ["2026B", "Aug 2026 FC", fc],
+          f"default_lines, no comp {tx.default_lines(cube, fc, '')}")
+    check(p, tx.default_lines(cube, fc, "2025A") == ["2025A", "2026B", fc],
+          f"default_lines vs PY {tx.default_lines(cube, fc, '2025A')}")
+    check(p, tx.default_lines(cube, fc, "2026B") == ["2026B", fc],
+          f"default_lines vs Budget {tx.default_lines(cube, fc, '2026B')}")
+
+    gap = tx.build_cube(_frame(JAN_2027_NO_FC))
+    check(p, tx.default_lines(gap, "2027B", "") == ["2027B"],
+          f"gap-week default_lines {tx.default_lines(gap, '2027B', '')}")
+    check(p, tx.outlook_vintages(gap, "2027B") == ["2027B"], "gap-week outlook")
+    check(p, tx.prior_year_actuals(gap, "2027B") == "2026A", "gap-week PY")
+
+    # start + every step == end, for every dollar total and subtotal, at every
+    # period the charts offer, against each kind of comparison.
+    for comp in ("Aug 2026 FC", "2026B", "2025A"):
+        for row in tx.ROWS:
+            if row.is_pct or row.row_type == "sub" or not row.is_derivable:
+                continue
+            for period in tx.TREND_PERIODS:
+                b = tx.bridge(cube, row, fc, comp, period)
+                if b is None:
+                    p.append(f"bridge row{row.idx} vs {comp} {period}: None")
+                    continue
+                gap_m = abs(b.start + sum(s.delta for s in b.steps) - b.end) / 1e6
+                check(p, gap_m < 0.5,
+                      f"bridge row{row.idx} vs {comp} {period} misses by ${gap_m:.2f}M")
+                check(p, b.parent is row, f"bridge row{row.idx} parent {b.parent.idx}")
+                check(p, not any(s.highlight for s in b.steps),
+                      f"bridge row{row.idx}: a total highlighted a step")
+    check(p, tx.bridge(cube, tx.ROWS[6], fc, "", tx.ANNUAL) is None, "bridge with no comp")
+    check(p, tx.bridge(cube, tx.ROWS[13], fc, "2026B", tx.ANNUAL) is None,
+          "bridge of a % row")
+    sub = tx.bridge(cube, tx.ROWS[0], fc, "2026B", tx.ANNUAL)    # Revenue NA
+    check(p, sub is not None and sub.parent.idx == 6, "a detail row bridges its total")
+    check(p, sub is not None and [s.label for s in sub.steps if s.highlight]
+          == ["North America"], "the detail row is not the highlighted step")
+    phys = tx.bridge(cube, tx.ROWS[17], fc, "2026B", tx.ANNUAL)  # EBITDA Total Phys
+    check(p, phys is not None and [s.label for s in phys.steps][:3]
+          == ["North America", "International", "Eliminations"],
+          f"Total Physical EBITDA children {phys and [s.label for s in phys.steps]}")
+    return p
+
+
+def main() -> None:
+    suites = (
+        ("LABELS", check_labels()),
+        ("ORDERING", check_ordering()),
+        ("OCT 2026", check_oct_2026()),
+        ("PERIODS", check_period_labels()),
+        ("JAN 2027", check_jan_2027()),
+        ("DELTA MODES", check_delta_modes()),
+        ("TRENDS", check_trends()),
+    )
+    failed = False
+    for name, problems in suites:
+        print(f"{name:<12} {'FAIL' if problems else 'pass'}")
+        for msg in problems:
+            print(f"  {msg}")
+        failed |= bool(problems)
+    print("\n" + ("FAILED" if failed else "ALL VINTAGE CHECKS PASS"))
+    raise SystemExit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()

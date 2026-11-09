@@ -17,6 +17,81 @@ asserts the code side's invariants so the two cannot drift apart unnoticed.
 
 ---
 
+## 0. 2026-09-29 — Compensation add-back DISABLED
+
+`queries.APPLY_COMPENSATION_ADJUSTMENT = False`. The app now reports the
+source's own `ACX_Gross Margin` and `ACX_EBITDA`, matching **EPM cube CARDPLN**,
+which is the business standard.
+
+**Why.** The add-back described in section 2 was double-correcting. Finance
+already handles the Compensation double-count outside this app, so adding
+`ACX_Compensation` back here on top of that inflated every cost row. The
+deciding evidence, all three agreeing on the same figure:
+
+| Source | Q1 FY26 North America EBITDA |
+|---|---|
+| EPM Smart View (CARDPLN, `Total - North America Gross`, `ACX_EBITDA`, CO_31000, all other dims Total) | **195.32** |
+| `CARDPLN_PL_BY_LOB` | **195.32** |
+| `CARDPLN_PL_BY_LOB_V` | **195.32** |
+| This app, before the change | 244.22 |
+
+The +48.90 was exactly `ACX_Compensation` for that cell
+(195.3216765600 + 48.8998233100 = 244.2214998700).
+
+The source's subtotal chain is also internally consistent, which section 2
+assumed it was not — for Q1 FY26 NA:
+
+```
+Gross Margin = Net Revenue - COGS          668.8640 - 362.9056 = 305.9583  ✓ stored
+EBITDA       = GM - Marketing - SG&A       305.9583 - 10.8743 - 99.7624 = 195.3217  ✓ stored
+```
+
+So `ACX_EBITDA` needed no correction at all.
+
+**Effect.** Jul. FC Total EBITDA, as displayed ($M):
+
+| Period | Before | After | Change |
+|---|---|---|---|
+| Q1 | 237 | 144 | −93.6 |
+| Q2 | 629 | 523 | −106.3 |
+| Q3 | 462 | 346 | −116.2 |
+| Q4 | 527 | 397 | −129.6 |
+| **FY** | **1,855** | **1,410** | **−445.6** |
+
+All 19 cost rows move down by their Compensation amount. The figures now move
+*away* from the deck (`FC_Forecast Dashboard_Jul 2026 FC.html`), which means the
+deck's cost basis — not this source — is the thing that needs explaining. Revenue
+is untouched and still ties exactly.
+
+**Reversible.** Set the flag to `True` to restore the old behaviour; nothing else
+changes. `COMPENSATION_LINE` is still fetched, `_apply_compensation()` is still
+present, and `tools/test_compensation_flag.py::FLAG ON` asserts the add-back
+returns at exactly the Compensation amount.
+
+**Consequences for the gates.** `validate_vs_deck.py::check_compensation` is
+skipped while the flag is False (it only ever justified the add-back) and prints
+`compensation adjustment disabled - skipped`. **All nine gates pass** with the
+flag off — verified 2026-09-29, 12 vintages / 796 rows:
+
+```
+FORMATTERS   pass                    COMP ADDITIV pass
+GAP REGISTRY pass  (21 flagged)      ROW 22       pass  (153 cells, all grains)
+BASE vs VIEW pass  (3,845 cells)     ADDITIVITY   pass  (199 cells)
+COMPENSATION pass  (skipped)         REV ANNUAL / REALLOCATION / REV CELLS  pass
+ALL GATES PASS
+```
+
+`ROW 22` was expected to need recalibrating and does **not**: Key Litigation
+carries zero Compensation at every grain in the vintages that make up
+`ROW22_TIES`, so removing the add-back leaves that row — and the tie pattern —
+untouched.
+
+**Open.** Keep the flag `False` until the cost-center alternate hierarchy exists.
+Sections 2 and 3 below describe the add-back and its residual as they were, and
+are retained as the record of why it was introduced.
+
+---
+
 ## 1. What reconciles
 
 **All 7 Revenue rows match the deck exactly** — at all three grains (annual,
@@ -35,6 +110,12 @@ section 6.2.
 ---
 
 ## 2. The Compensation double-count — found and corrected
+
+> **Superseded by section 0 (2026-09-29).** The correction described here is
+> now **disabled** (`queries.APPLY_COMPENSATION_ADJUSTMENT = False`); its premise
+> — that the source's EBITDA chain double-charges Compensation — did not hold
+> against EPM. This section is retained as the record of why it was introduced
+> and of what flipping the flag back to `True` would do.
 
 `ACX_Compensation` is charged **twice** in the source: once into
 `ACX_Cost of Goods Sold` and again into `ACX_Other SG&A`.
@@ -164,14 +245,14 @@ Four rows render as an em-dash. Every other row shows its live figure.
 | 1 | Revenue | International | — | yes |
 | 2 | Revenue | Total Physical Cards | — | yes |
 | 3 | Revenue | Digital | `SPLIT` | yes |
-| 4 | Revenue | Total ex-Emerging Svcs | — | yes |
+| 4 | Revenue | Subtotal | — | yes |
 | 5 | Revenue | Fanatics Collect | `COMBINED` | yes |
 | 6 | Revenue | Total Revenue | — | yes |
 | 7 | Gross Margin | North America | `UNRECONCILED` | yes |
 | 8 | Gross Margin | International | `UNRECONCILED` | yes |
 | 9 | Gross Margin | Total Physical Cards | `UNRECONCILED` | yes |
 | 10 | Gross Margin | Digital | `UNRECONCILED`, `HIERARCHY` | **no** — broken residual |
-| 11 | Gross Margin | Total ex-Emerging Svcs | `UNRECONCILED` | yes |
+| 11 | Gross Margin | Subtotal | `UNRECONCILED` | yes |
 | 12 | Gross Margin | Fanatics Collect | `UNRECONCILED` | yes |
 | 13 | Gross Margin | Total Gross Margin | `UNRECONCILED` | yes |
 | 14 | EBITDA | North America | `UNRECONCILED` | yes |
@@ -180,7 +261,7 @@ Four rows render as an em-dash. Every other row shows its live figure.
 | 17 | EBITDA | Total Physical Cards | `UNRECONCILED` | yes |
 | 18 | EBITDA | Digital | `UNRECONCILED`, `SPLIT`, `HIERARCHY` | **no** — broken residual |
 | 19 | EBITDA | Corporate | `UNRECONCILED`, `SPLIT` | **no** — no expression |
-| 20 | EBITDA | Total ex-Emerging Svcs | `UNRECONCILED` | yes |
+| 20 | EBITDA | Subtotal | `UNRECONCILED` | yes |
 | 21 | EBITDA | Fanatics Collect | `UNRECONCILED`, `COMBINED` | yes |
 | 22 | EBITDA | Key Litigation Costs | `UNRECONCILED` | yes — see 6.2 |
 | 23 | EBITDA | TCG | `UNRECONCILED`, `ABSENT` | **no** — no expression |
@@ -250,20 +331,98 @@ on its own row, as the deck does — folding there would double-count.
 **Period labels are computed, not hardcoded.** They come per vintage from
 `period_date < DATE_TRUNC('MONTH', forecast_asof_date)`. The deck hardcoded its
 26A/26F suffixes, so it mislabelled every vintage other than Jul. FC. A quarter
-counts as actual only when all of its months are.
+counts as actual only when all of its months are. Since 2026-10-09 (CI-74) a
+quarter holding both kinds says so: Sep 2026 FC's Q3 is **`Q3 26A+F`** (Jul–Aug
+actual, Sep forecast — the header's hover text), where the deck, and James's Sep
+PDF, print `Q3 26F`. A YTD column can mix the same way on the comparison side
+(Aug 2026 FC's `YTD Aug 26A+F`). **FY never does**: a year with any forecast month
+stays `FY 2026F`, as the deck prints it, and only its hover text gives the split.
+A quarter a vintage holds only part of carries its months — `Q3 26A (Jul–Aug)` for
+2026 Actuals in October — though partial-year Actuals are not offered anyway.
+
+Each value block is labelled as **its own** vintage's periods
+(`Cube.period_label`). Before, the comparison block reused the forecast's labels,
+so 2025 Actuals read `Q3 26F … FY 2026F` and Aug 2026 FC read `Aug 26A` over a
+month that was still a forecast in it. The change block keeps the forecast's
+labels. The downloads carry the same headers.
 
 **FY25 actuals have been restated** since the deck was exported: some 2025A
 months were reallocated within H1. Annual and quarterly totals are unaffected;
 the figures here are the current ones.
 
-**FY26 Actuals is a 7-month partial year** (Q1–Q3, no Q4) and its FY total is a
-7-month sum. It is not a like-for-like comparison against a full-year vintage.
-This one *is* still warned about in the app, because it changes how a number
-should be read the moment it is selected.
+**Partial-year Actuals are not offered** (since 2026-10-06). FY26 Actuals
+(Jan–Aug today) is a strict subset of the newest forecast — its closed months
+*are* that forecast's actual months — and its FY total is an n-month sum that
+reads as a full year. It stays in the cube but is not in either dropdown or the
+Trends checklist; an Actuals year appears once all 12 months are in, which is
+when it becomes the prior-year comparison. What it was used for — actuals YTD
+against Budget YTD — is the **YTD column** (`YTD Aug 26A`), placed before FY at
+every grain whenever the forecast is part-way through its year. The comparison
+side is summed over the *forecast's* months (the month range lives in the period
+key, `YTD:Aug`), so Budget/PY/prior-FC YTD always cover the same months.
+
+**Vintage keys carry their year and nothing names one** (since 2026-10-06).
+Forecasts are `'Sep 2026 FC'` (was `'Sep. FC'`), Actuals and Budget stay
+`2025A` / `2026B`, and labels are derived (`2025 Actuals`, no "(PY)"). The SQL
+reads each forecast only at the fiscal year of its own as-of date — RF
+scenarios are ~18-month rolling horizons (SEP26RF carries all of FY27), so
+without that match one key would hold two years. `queries.FIRST_FISCAL_YEAR`
+(`FY25`) is the history floor for Actuals and Budgets;
+`queries.FIRST_FORECAST_FISCAL_YEAR` (`FY26`) is the floor for forecasts (A11).
+
+**Retired vintages.** Once a year's actuals are final (its Actuals vintage has
+12 months), that year's forecasts and Budget are hidden by default
+(`Cube.is_retired`) and come back with the sidebar's *Show prior-year forecasts
+& budgets*. The toggle is drawn only when something is retired. Today nothing
+is: the FY25 forecasts (Oct/Nov/Dec 2025 FC) are removed from the SQL, not
+hidden (A11, `queries.FIRST_FORECAST_FISCAL_YEAR`; James 2026-10-20, Megan
+2026-10-23, Maya 2026-11-03), and there is no 2025 Budget.
+In January 2027 it will be every 2026 FC and 2026 Budget, with 2026 Actuals
+becoming the default comparison. `tools/test_vintages.py` asserts that
+transition offline.
+
+**Change cells are greyed where both sides are the same actuals.** Comparing two
+forecasts of one year, the months closed in both are byte-identical (section 3),
+so their change is zero by construction and printed `+0%` across the closed
+months. Those cells are now a muted em-dash. Only same-year, both-actual periods
+qualify: vs. Budget and vs. prior-year Actuals still show real variances in
+actual months. `tools/smoke_render.py::check_change` fails if a greyed cell ever
+hides a non-zero difference.
+
+**The change column has a `% | $` toggle**, in that column's own header (a
+`'mode'` click on the table component, so it is unavailable — rendered
+disabled — on the static fallback, like section collapse). Dollar rows show a
+percent change or the gross change in $M; margin rows are basis points in both
+modes. The table keeps its horizontal scroll across the re-render, so clicking
+it at the far right of the Monthly view does not jump back to January.
 
 **Percent metrics are plotted on a percent scale.** The deck read `def.is_pct`
 while its row definitions supplied `isPct`, so all 7 Gross Margin rows and EBITDA
 Margin were plotted and labelled on the dollar scale. Fixed here.
+
+**BU pages: North America is NASE + GCP** (2026-10-23, Maya's review of c119831
+against James's *2027 Budget | P&L: North America Excl GCP* slide). Consolidated
+North America is LB_302 (NASE) + LB_304 (GCP gross: GC Packaging, the card
+printer) + LB_394 (GCP eliminations, which take GCP's sales to Topps back out);
+James's slide is LB_302 alone. The NA page folded all three into one basis, which
+caused all four of Maya's findings: LB_394's −$286M of parent-only COGS sat in
+Standard Mfg (7% vs the slide's 12%), LB_304's $120M of Compensation sat in Other
+(7% vs 3%), COGS read $35M low, SG&A $12M high, and EBITDA $22M high. The %s were
+over a different base too. The page now shows every $ line as **NASE**, then
+**GCP**, then the **NA total**, which still ties to the consolidated rows (Net
+Sales = row 0, EBITDA = row 14). The COGS buckets are NASE-only. Every % is
+over Net Sales incl. Topps eliminations, as on the slide, so the NA Gross
+Profit % (60%) is *not* consolidated row 7 (which is over revenue ex Topps) — by
+decision. Labels follow the slide: Gross Revenue, Net Sales, Gross Profit.
+Compensation stays in Other: NASE's is only $3.1M, and the slide's Other %
+reproduces only with it in. The other BU pages now show Total COGS as $ (with
+the buckets as %), not as %. `tools/validate_bu.py` gates the split (NA =
+NASE+GCP, every vintage × period) and the 70 printed Sep 2026 FC cells of the
+slide (NA SLIDE). Under the old grouping that gate fails 35 of 70 cells, with
+exactly Maya's numbers. The slide's 2027B columns are not checkable: STG has
+no FY27 budget yet. Also: Digital's page now always lists **Autos & Relics**,
+since the 2026-10-23 load put $0.067M on LB_305 in Sep 2026 Actuals (and so
+Oct 2026 FC).
 
 ---
 
@@ -290,9 +449,20 @@ future change to the view cannot drift away unnoticed.
 
 ## 9. Deployment status
 
-**`VERSION$1`, deployed 2026-09-14, is STALE.** It predates the Compensation
-correction of section 2. Redeploy before trusting any Gross Margin or EBITDA
-figure in the live app.
+**`VERSION$1`, deployed 2026-09-15, is byte-identical to the working copy** —
+verified 2026-09-29 by downloading
+`snow://streamlit/ORACLE_DATA_PROD.SANDBOX.DRILLABLE_PNL_DASH/versions/live/` and
+diffing: `queries.py` and `transforms.py` match the local files exactly once CRLF
+line endings are normalised (live is CRLF, local LF; the byte deltas of +221 and
++646 are precisely the line counts). Same MD5 after normalisation.
+
+The earlier note here — that `VERSION$1` predated the Compensation correction —
+was **wrong**. The correction was live, which is why the deployed app showed
+1,855 (the post-add-back figure) rather than 1,409.7.
+
+**It is now stale for a different reason:** the live version still has the
+add-back enabled and therefore still shows 244 for Q1 FY26 North America. Redeploy
+to ship section 0.
 
 ```
 snow streamlit deploy drillable_pnl_dash --replace --role POWER_ANALYST_ORACLE_PROD
@@ -326,10 +496,25 @@ explanations. All of it is in this file.
 
 Kept, because each is a live operational fact rather than a caveat:
 
-* the **partial-year warning** when FY26 Actuals is selected (section 7);
 * the **data-freshness caption** — pull time, row count, vintage list;
+* the **prior-year toggle** in the sidebar, listing what it hides;
 * the **section-collapse fallback message**, when the Streamlit runtime is below
   1.57 or the table component fails to register.
 
+The partial-year warning is gone with partial-year Actuals (section 7). Added
+2026-10-06, none of them caveats: the change header names its comparison
+(`Change vs. Aug 2026 FC`), the `% | $` toggle in that header, and **Download Excel /
+CSV** of the statement as shown (`export.py`, raw unrounded figures, all 26 rows
+whatever is collapsed).
+
 The four non-derivable rows render as an em-dash with no on-screen explanation.
 The explanation is section 4 (`HIERARCHY`, `SPLIT`, `ABSENT`).
+
+**The one deliberate caveat (2026-10-09):** the header reads *Collectibles
+Forecast Dashboard **(DRAFT)*** over *Numbers under validation. Not final.*, in
+amber. It is a blanket notice, not a per-figure explanation, and it comes off with
+one edit: `streamlit_app.DRAFT_NOTICE = None`. The downloads do not carry it.
+
+The row the deck calls **Total ex-Emerging Svcs** is labelled **Subtotal** in all
+three sections (CI-66); its hover text keeps the old name. The sections above
+still use the deck's name where they discuss the segment.

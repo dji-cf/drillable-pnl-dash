@@ -1,0 +1,246 @@
+ACCOUNT,LINE,LINE_ORDER
+AC_60001,Marketing,27
+AC_60002,Marketing,27
+AC_60003,Marketing,27
+AC_60004,Marketing,27
+AC_60005,Marketing,27
+AC_60006,Marketing,27
+AC_60007,Marketing,27
+AC_60008,Marketing,27
+AC_60009,Marketing,27
+AC_60010,Marketing,27
+AC_60011,Marketing,27
+AC_60012,Marketing,27
+AC_60013,Marketing,27
+AC_60014,Marketing,27
+AC_60015,Marketing,27
+AC_60016,Marketing,27
+AC_60017,Marketing,27
+AC_60018,Marketing,27
+AC_60100,Banking Fees,35
+AC_60101,Banking Fees,35
+AC_60102,Banking Fees,35
+AC_60103,Banking Fees,35
+AC_60104,Banking Fees,35
+AC_60105,Banking Fees,35
+AC_60151,"Rev Share (MLB, other licenses)",45
+AC_60152,Rev Share - guarantee (NBA & NFL Settlement),46
+AC_60153,Other/Miscellaneous,52
+AC_60154,Other/Miscellaneous,52
+AC_60155,Player Bonus,47
+AC_60156,Other/Miscellaneous,52
+AC_60301,Computer/Tech - Equipment,29
+AC_60302,Computer/Tech - Software Licenses & Maintenance,30
+AC_60303,Computer/Tech - Other,28
+AC_60304,Computer/Tech - Other,28
+AC_60305,Computer/Tech - Other,28
+AC_60307,Computer/Tech - Other,28
+AC_60308,Computer/Tech - Other,28
+AC_60309,Computer/Tech - Other,28
+AC_60310,Computer/Tech - Other,28
+AC_60311,Tech - Allocations IN from FHI/Commerce/FBG,31
+AC_60312,Computer/Tech - Other,28
+AC_60313,Computer/Tech - Other,28
+AC_60401,Other/Miscellaneous,52
+AC_60402,Other/Miscellaneous,52
+AC_60501,Salaries - Base Salaries,1
+AC_60503,Salaries - Base Salaries,1
+AC_60506,Salaries - Base Salaries,1
+AC_60507,Salaries - Base Salaries,1
+AC_60508,Salaries - Base Salaries,1
+AC_60509,Salaries - Base Salaries,1
+AC_60510,Salaries - Base Salaries,1
+AC_60511,Salaries - Base Salaries,1
+AC_60512,Salaries - Base Salaries,1
+AC_60513,Salaries - Base Salaries,1
+AC_60514,Salaries - Base Salaries,1
+AC_60515,Salaries - Base Salaries,1
+AC_60516,Salaries - Base Salaries,1
+AC_60517,Salaries - Base Salaries,1
+AC_60518,Salaries - Base Salaries,1
+AC_60519,Salaries - Base Salaries,1
+AC_60521,Salaries - Base Salaries,1
+AC_60522,Salaries - Base Salaries,1
+AC_60523,Salaries - Base Salaries,1
+AC_60525,Salaries - Base Salaries,1
+AC_60526,Salaries - Base Salaries,1
+AC_60527,Salaries - Base Salaries,1
+AC_60537,Allocated Compensation,5
+AC_60539,Salaries - Base Salaries,1
+AC_60540,Salaries - Base Salaries,1
+AC_60541,Salaries - Base Salaries,1
+AC_60543,Allocated Compensation,5
+AC_60520,Severance,2
+AC_60524,Severance,2
+AC_60502,Bonus Expense,3
+AC_60505,Bonus Expense,3
+AC_60535,Allocated Compensation,5
+AC_60528,Bonus Expense,3
+AC_60542,Bonus Expense,3
+AC_60504,Benefits,4
+AC_60529,Benefits,4
+AC_60530,Benefits,4
+AC_60531,Benefits,4
+AC_60532,Benefits,4
+AC_60533,Benefits,4
+AC_60534,Benefits,4
+AC_60536,Allocated Compensation,5
+AC_60538,Allocated Compensation,5
+AC_60625,Benefits,4
+AC_60601,Benefits,4
+AC_60602,Benefits,4
+AC_60603,Benefits,4
+AC_60604,Benefits,4
+AC_60605,Benefits,4
+AC_60606,Benefits,4
+AC_60607,Benefits,4
+AC_60608,Benefits,4
+AC_60609,Benefits,4
+AC_60610,Benefits,4
+AC_60611,Benefits,4
+AC_60612,Benefits,4
+AC_60613,Benefits,4
+AC_60614,Insurance,32
+AC_60615,Insurance,32
+AC_60616,Insurance,32
+AC_60617,Insurance,32
+AC_60618,Insurance - Allocations IN from FHI/Commerce/FBG,33
+AC_60619,Insurance,32
+AC_60620,Insurance,32
+AC_60621,Insurance,32
+AC_60701,Licenses and Taxes,34
+AC_60702,Licenses and Taxes,34
+AC_60703,Licenses and Taxes,34
+AC_60801,Meals (indiv),15
+AC_60802,Entertainment (Client),16
+AC_60803,Entertainment (Client),16
+AC_60804,Entertainment (Client),16
+AC_60805,Entertainment (Client),16
+AC_60901,Office Supplies,26
+AC_60902,Office Supplies,26
+AC_60903,Office Supplies,26
+AC_60306,Computer/Tech - Outside services/Consulting Fees,12
+AC_61001,Accounting (Oracle consultants),10
+AC_61002,Legal & Litigation,6
+AC_61003,Audit,7
+AC_61004,Tax Services,8
+AC_61005,Recruiting & Relocation,9
+AC_61006,Other Professional Services,14
+AC_61007,Other Professional Services,14
+AC_61008,Other Professional Services,14
+AC_61009,Marketing Consultants,11
+AC_61010,Other Professional Services,14
+AC_61011,Other Professional Services,14
+AC_61012,Other Professional Services,14
+AC_61013,Other Professional Services,14
+AC_61014,Other Professional Services,14
+AC_61015,Contract Costs (license rights signing bonus amort),49
+AC_61016,Other Professional Services,14
+AC_61017,Other Professional Services,14
+AC_61616,Outside Services (Temp Labor),13
+AC_61101,"Rent (co-working space fees, office parking)",21
+AC_61102,"Rent (co-working space fees, office parking)",21
+AC_61103,Rent/Lease - Allocations IN from FHI/Commerce/FBG,22
+AC_61104,"Rent (co-working space fees, office parking)",21
+AC_61201,Repairs and Maintenance,24
+AC_61202,Repairs and Maintenance,24
+AC_61301,Trade Shows & Seminar attendance (tickets),18
+AC_61302,"Travel (air, hotel, taxi)",19
+AC_61303,"Travel (air, hotel, taxi)",19
+AC_61304,Aviation (private jet),17
+AC_61305,"Travel (air, hotel, taxi)",19
+AC_61306,"Travel (air, hotel, taxi)",19
+AC_61307,"Travel (air, hotel, taxi)",19
+AC_61401,Utilities,25
+AC_61402,Utilities,25
+AC_61501,Other/Miscellaneous,52
+AC_61502,Other/Miscellaneous,52
+AC_61503,Other/Miscellaneous,52
+AC_61504,Other/Miscellaneous,52
+AC_61505,Other/Miscellaneous,52
+AC_61506,Other/Miscellaneous,52
+AC_61507,Other/Miscellaneous,52
+AC_61508,Other/Miscellaneous,52
+AC_61509,Other/Miscellaneous,52
+AC_61510,Other/Miscellaneous,52
+AC_61511,Other/Miscellaneous,52
+AC_61512,Other/Miscellaneous,52
+AC_61513,Other/Miscellaneous,52
+AC_61514,Other/Miscellaneous,52
+AC_61515,Other/Miscellaneous,52
+AC_61516,Other/Miscellaneous,52
+AC_61601,Other/Miscellaneous,52
+AC_61602,Other/Miscellaneous,52
+AC_61603,"Special Events (Athlete signings, holiday parties)",40
+AC_61604,Other/Miscellaneous,52
+AC_61605,Other/Miscellaneous,52
+AC_61606,Other/Miscellaneous,52
+AC_61607,Other/Miscellaneous,52
+AC_61608,Other/Miscellaneous,52
+AC_61609,Intercompany Service Charge,50
+AC_61610,Bad Debt,42
+AC_61611,Other/Miscellaneous,52
+AC_61612,Donations,39
+AC_61613,Dues & Subscriptions,44
+AC_61614,"Employee Relations (staff events, staff gifts, staff entertain)",41
+AC_61615,Other/Miscellaneous,52
+AC_61617,Other/Miscellaneous,52
+AC_61618,Postage,43
+AC_61619,Other/Miscellaneous,52
+AC_61620,Telephone & Cell phone reimbursement,20
+AC_61621,Other/Miscellaneous,52
+AC_61622,Other/Miscellaneous,52
+AC_61623,Other SG&A - Allocations IN from FHI/Commerce/FBG,51
+AC_61624,Misc Contract Costs (Athlete 360 Deals Shortfall),48
+AC_61625,Other/Miscellaneous,52
+AC_61626,Other/Miscellaneous,52
+AC_61628,Other/Miscellaneous,52
+AC_61629,Other/Miscellaneous,52
+AC_61630,Other/Miscellaneous,52
+AC_61631,Other/Miscellaneous,52
+AC_61632,Other/Miscellaneous,52
+AC_61633,Other/Miscellaneous,52
+AC_61634,Other/Miscellaneous,52
+AC_60157,"Internet Commissions (Amazon, Walmart)",36
+AC_61701,"Lease Expense (formal lease amort, sublease income)",23
+AC_61702,"Lease Expense (formal lease amort, sublease income)",23
+AC_61703,"Lease Expense (formal lease amort, sublease income)",23
+AC_61704,"Lease Expense (formal lease amort, sublease income)",23
+AC_61705,"Lease Expense (formal lease amort, sublease income)",23
+AC_61706,"Lease Expense (formal lease amort, sublease income)",23
+AC_61801,Other/Miscellaneous,52
+AC_61802,Other/Miscellaneous,52
+AC_61803,Other/Miscellaneous,52
+AC_61804,Other/Miscellaneous,52
+AC_61805,Other/Miscellaneous,52
+AC_61901,Research & Development (incl Collect Credit),38
+AC_62001,Other/Miscellaneous,52
+AC_62002,Other/Miscellaneous,52
+AC_62003,Other/Miscellaneous,52
+AC_62004,Other/Miscellaneous,52
+AC_62005,Other/Miscellaneous,52
+AC_62006,Other/Miscellaneous,52
+AC_62007,Other/Miscellaneous,52
+AC_62301,Foreign Exchange,37
+AC_62302,Foreign Exchange,37
+AC_62303,Foreign Exchange,37
+AC_62304,Foreign Exchange,37
+AC_62305,Foreign Exchange,37
+AC_62306,Foreign Exchange,37
+AC_62307,Foreign Exchange,37
+AC_62308,Foreign Exchange,37
+AC_62309,Foreign Exchange,37
+AC_62310,Foreign Exchange,37
+AC_62311,Foreign Exchange,37
+AC_62312,Foreign Exchange,37
+AC_62313,Foreign Exchange,37
+AC_62314,Foreign Exchange,37
+AC_62350,Foreign Exchange,37
+AC_62351,Foreign Exchange,37
+AC_62352,Foreign Exchange,37
+AC_62353,Foreign Exchange,37
+AC_62354,Foreign Exchange,37
+AC_62355,Foreign Exchange,37
+AC_62356,Foreign Exchange,37
+AC_62357,Foreign Exchange,37
+AC_62358,Foreign Exchange,37

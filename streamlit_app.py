@@ -1,10 +1,22 @@
 """Drillable P&L -- the Collectibles forecast deck, live against Snowflake.
 
-Two pages, ported from FC_Forecast Dashboard_Jul 2026 FC.html:
+The consolidated page, ported from FC_Forecast Dashboard_Jul 2026 FC.html:
 
-  Forecast Table     26 P&L rows x up to 39 columns, collapsible sections,
-                     vintage comparison, three grains.
-  Historical Trends  one metric across vintages, Annual / Quarterly / Monthly.
+  Forecast Table     26 P&L rows x up to 42 columns, collapsible sections,
+                     vintage comparison, four Views, Excel / CSV export.
+  Historical Trends  how the outlook moved, in which months, and which
+                     business units moved it -- for one metric.
+
+plus, under the STG source, a P&L page per business unit (bu.py): North
+America, International, Digital and Fanatics Live and Collect. Clicking one of those
+labels on the consolidated Revenue or EBITDA block opens it.
+
+STRUCTURE. This file is the entrypoint SHELL: page config, header, the data
+load, the sidebar and the Forecast / vs. pair, then st.navigation runs the
+current page. Those widgets live here, not on a page, because widget state
+only survives a page switch for widgets the entrypoint renders. The grain
+control is per page and carried across through a plain shadow key; the Trends
+tab's widgets are page-local and reset after a visit to a BU page.
 
 Revenue is live and reconciles to the deck (see tools/validate_vs_deck.py). The
 19 cost rows carry a cost basis that is corrected for the source's Compensation
@@ -17,17 +29,36 @@ Local: .\\run.ps1     (uses this project's .venv -- Streamlit >= 1.57 required
 """
 from __future__ import annotations
 
+from typing import Callable, Mapping, Sequence
+
 import streamlit as st
 
-st.set_page_config(
-    page_title="Drillable P&L — Collectibles Forecast",
-    page_icon="\U0001F4C8",
-    layout="wide",
-)
+#: The one draft switch. Every "DRAFT" string in the UI and the downloads is
+#: built from this; set to "" at go-live to drop them all (and DRAFT_NOTICE).
+DRAFT_LABEL = "(DRAFT)"
 
+
+def _drafted(text: str) -> str:
+    """'(DRAFT) <text>' while DRAFT_LABEL is set, else text unchanged."""
+    return f"{DRAFT_LABEL} {text}" if DRAFT_LABEL else text
+
+
+def _tab(text: str) -> str:
+    """Browser-tab form: 'DRAFT — <text>'."""
+    return f"{DRAFT_LABEL.strip('()')} — {text}" if DRAFT_LABEL else text
+
+
+# st.set_page_config runs in the __main__ block at the bottom, so importing this
+# file (financial_app.py does) renders nothing. None of these modules calls st.*
+# at import -- only the @st.cache_* / @st.fragment decorators.
+import agent_chat                # noqa: E402
+import bu                        # noqa: E402
 import charts                    # noqa: E402
 import data                      # noqa: E402
+import export                    # noqa: E402
 import interactive               # noqa: E402
+import pandas as pd              # noqa: E402
+import queries                   # noqa: E402
 import style                     # noqa: E402
 import table                     # noqa: E402
 import transforms as tx          # noqa: E402
@@ -36,73 +67,159 @@ GRAIN_LABELS: dict[str, str] = {
     "annual": "Annual",
     "quarterly": "Quarterly",
     "monthly": "Monthly",
+    "ytd": "YTD",
 }
 NONE_LABEL = "— None —"
+#: The line under the header while the figures are still being validated
+#: against EPM. Shown only while DRAFT_LABEL is set.
+DRAFT_NOTICE: str | None = "Numbers under validation. Not final."
 
-style.inject()
+#: Plain (non-widget) session key the grain controls share, so the View picked
+#: on one page is the View on the next. A widget's own key is dropped when a
+#: page that does not render it runs.
+GRAIN_SHADOW = "_grain"
+#: The same for the Forecast / vs. pair. Needed where the pair renders inside a
+#: page (financial_app.py), not in the entrypoint: a page switch drops the
+#: widget keys "fc_sel" / "comp_sel", and these restore them.
+FC_SHADOW = "_fc"
+COMP_SHADOW = "_comp"
 
-st.markdown(
-    '<div class="shell-header">'
-    "<h1>Collectibles Forecast Dashboard</h1>"
-    '<div class="sub">FY 2026 &nbsp;·&nbsp; Figures in $M'
-    "</div>",
-    unsafe_allow_html=True,
-)
+SHELL_TITLE = "Collectibles Forecast Dashboard"
 
-# ---------------------------------------------------------------------------
-# Load
-# ---------------------------------------------------------------------------
-# load_master() lets its exceptions out on purpose (see data.py): a cached
-# loader that returned an empty frame would memoize that empty for two hours
-# and render a convincing but false "no data" dashboard.
-try:
-    master, pulled_at = data.load_master()
-except Exception as exc:  # noqa: BLE001 -- surface anything, then offer a retry
-    st.error(f"Could not load the P&L cube from Snowflake.\n\n`{exc}`")
-    if st.button("Retry", type="primary"):
-        data.load_master.clear()
-        st.rerun()
-    st.stop()
 
-cube = tx.build_cube(master)
+def _shell_header(fiscal_year: str | None, title: str | None = SHELL_TITLE) -> str:
+    """title=None drops the <h1> (the caller shows its own title above)."""
+    fy = f"FY {fiscal_year} &nbsp;·&nbsp; " if fiscal_year else ""
+    # Leads the title now, so its margin goes on the right instead of the left.
+    tag = (f'<span class="draft" style="margin:0 14px 0 0">{DRAFT_LABEL}</span>'
+           if DRAFT_LABEL else "")
+    note = (f'<div class="draft-note">{DRAFT_NOTICE}</div>'
+            if DRAFT_LABEL and DRAFT_NOTICE else "")
+    h1 = f"<h1>{tag}{title}</h1>" if title else ""
+    return (
+        '<div class="shell-header">'
+        f"{h1}"
+        f"{note}"
+        f'<div class="sub">{fy}Figures in $M</div>'
+        "</div>"
+    )
 
-if not cube.vintages:
-    st.warning("The query returned no vintages. Nothing to show.")
-    st.stop()
 
-# ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.caption(f"Data pulled {pulled_at:%Y-%m-%d %H:%M} UTC · {len(master):,} rows")
-    st.caption(f"{len(cube.vintages)} vintages: {', '.join(cube.vintages)}")
+def _keep_shadow(key: str, shadow: str) -> None:
+    """on_change: the widget's new value becomes the shadow value."""
+    st.session_state[shadow] = st.session_state.get(key)
 
-# ---------------------------------------------------------------------------
-# Pages
-# ---------------------------------------------------------------------------
-tab_table, tab_trends = st.tabs(["Forecast Table", "Historical Trends"])
 
-# ══ Forecast Table ═════════════════════════════════════════════════════════
-with tab_table:
-    fc_opts = tx.forecast_options(cube.vintages)
-    if not fc_opts:
-        fc_opts = list(cube.vintages)
-    if "fc_sel" not in st.session_state:
+def _restore(key: str, shadow: str, opts: Sequence[str]) -> None:
+    """Seed a widget key from its shadow, as _grain_control does for the View.
+
+    Every run, not only when the key is missing: after a page switch the key
+    still holds the old page's value, but a widget new to this page ignores it
+    unless it is written again before the widget renders.
+    """
+    if shadow not in st.session_state:
+        st.session_state[shadow] = st.session_state.get(key)
+    if st.session_state[shadow] in opts:
+        st.session_state[key] = st.session_state[shadow]
+
+
+def render_shell(title: str | None = SHELL_TITLE) -> None:
+    """The shell: styles, header, the data load, the sidebar and the Forecast /
+    vs. pair. Sets the module globals the page functions read. Called from the
+    __main__ block below and by financial_app.py; nothing here runs on import.
+    title: the header's <h1> text; None shows no <h1>.
+    """
+    global header, crumbs, master, pulled_at, cube, show_retired, forecast, comp
+
+    style.inject()
+
+    # Filled again once the forecast is chosen: the year is the selected
+    # forecast's, not a constant.
+    header = st.empty()
+    header.markdown(_shell_header(None, title), unsafe_allow_html=True)
+    # A BU page puts its breadcrumb and BU links here, above the Forecast / vs.
+    # pair the shell renders next.
+    crumbs = st.container()
+
+    # -----------------------------------------------------------------------
+    # Load
+    # -----------------------------------------------------------------------
+    # load_master() lets its exceptions out on purpose (see data.py): a cached
+    # loader that returned an empty frame would memoize that empty for two
+    # hours and render a convincing but false "no data" dashboard.
+    try:
+        master, pulled_at = data.load_master()
+    except Exception as exc:  # noqa: BLE001 -- surface anything, then offer a retry
+        st.error(f"Could not load the P&L cube from Snowflake.\n\n`{exc}`")
+        if st.button("Retry", type="primary"):
+            data.load_master.clear()
+            st.rerun()
+        st.stop()
+
+    cube = tx.build_cube(master)
+
+    if not cube.vintages:
+        st.warning("The query returned no vintages. Nothing to show.")
+        st.stop()
+
+    # -----------------------------------------------------------------------
+    # Sidebar
+    # -----------------------------------------------------------------------
+    with st.sidebar:
+        # Here in the shell, not on a page, so the conversation survives a switch
+        # to a BU page and back. A fragment: asking reruns only the chat.
+        agent_chat.render()
+
+        st.divider()
+        st.caption(f"Data pulled {pulled_at:%Y-%m-%d %H:%M} UTC · {len(master):,} rows")
+        st.caption(f"{len(cube.vintages)} vintages: "
+                   f"{', '.join(tx.vintage_label(v) for v in cube.vintages)}")
+        # Once a year's actuals are final its forecasts and budget are history,
+        # so they are hidden by default (Cube.is_retired). Offered only when
+        # there is something to bring back.
+        retired = [v for v in cube.vintages if cube.is_retired(v)]
+        show_retired = False
+        if retired:
+            closed = ", ".join(sorted({cube.fiscal_year[v] for v in retired}))
+            show_retired = st.checkbox(
+                "Show prior-year forecasts & budgets",
+                key="show_retired",
+                help=f"Forecasts and budgets for years whose actuals are final "
+                     f"({closed}) are hidden by default. "
+                     f"{len(retired)} hidden: "
+                     f"{', '.join(tx.vintage_label(v) for v in retired)}.",
+            )
+
+    # -----------------------------------------------------------------------
+    # Forecast and comparison -- one pair for every page and tab
+    # -----------------------------------------------------------------------
+    # Above the pages so the statement's change column, the Trends bridge and
+    # every BU page always compare the same two vintages.
+    fc_opts = tx.forecast_options(cube, show_retired)
+    _restore("fc_sel", FC_SHADOW, fc_opts)
+    # Also covers a selection that has just stopped being offered (the
+    # prior-year toggle switched off under it) -- a session_state value outside
+    # the options would otherwise make the selectbox raise.
+    if st.session_state.get("fc_sel") not in fc_opts:
         st.session_state.fc_sel = fc_opts[0]
 
-    c1, c2, c3 = st.columns([1.3, 1.6, 2.2], vertical_alignment="bottom")
+    c1, c2, _ = st.columns([1.3, 1.6, 3.1], vertical_alignment="bottom")
 
     with c1:
         forecast = st.selectbox(
-            "Forecast", fc_opts, key="fc_sel", format_func=tx.vintage_label
+            "Forecast", fc_opts, key="fc_sel", format_func=tx.vintage_label,
+            on_change=_keep_shadow, args=("fc_sel", FC_SHADOW),
         )
+    st.session_state[FC_SHADOW] = forecast
 
-    comp_opts = tx.comp_options(cube.vintages, forecast)
+    header.markdown(_shell_header(cube.year(forecast), title), unsafe_allow_html=True)
+
+    comp_opts = tx.comp_options(cube, forecast, show_retired)
+    _restore("comp_sel", COMP_SHADOW, comp_opts)
     if "comp_sel" not in st.session_state:
-        # First load only: default to the vintage immediately before the
-        # selected forecast, which is the deck's opening pairing (Jul. FC vs
-        # Jun. FC).
-        prior = [o for o in comp_opts if o.endswith(". FC")]
+        # First load only: default to the forecast immediately before the
+        # selected one, which is the deck's opening pairing (Jul. FC vs Jun. FC).
+        prior = [o for o in comp_opts if cube.scenario_label.get(o) == "FORECAST"]
         st.session_state["comp_sel"] = prior[0] if prior else ""
     else:
         # Thereafter the deck's refreshCompOpts() rule applies: a comparison
@@ -114,6 +231,7 @@ with tab_table:
         st.session_state["comp_sel"] = tx.resolve_comp(
             st.session_state["comp_sel"], forecast, comp_opts
         )
+        st.session_state[COMP_SHADOW] = st.session_state["comp_sel"]
 
     with c2:
         comp = st.selectbox(
@@ -121,147 +239,184 @@ with tab_table:
             comp_opts,
             key="comp_sel",
             format_func=lambda k: NONE_LABEL if k == "" else tx.vintage_label(k),
+            on_change=_keep_shadow, args=("comp_sel", COMP_SHADOW),
         )
+    st.session_state[COMP_SHADOW] = comp
 
+
+# ---------------------------------------------------------------------------
+# The statement view -- shared by the consolidated page and every BU page
+# ---------------------------------------------------------------------------
+def _keep_grain(key: str) -> None:
+    """on_change: a click on any page's View control becomes the shared View."""
+    st.session_state[GRAIN_SHADOW] = st.session_state.get(key) or "annual"
+
+
+def _grain_control(key: str) -> str:
+    """The Annual / Quarterly / Monthly / YTD control, always seeded from GRAIN_SHADOW.
+
+    The shadow is the one source of truth: the callback above writes it before
+    the run a click causes, and every run writes it back into this page's
+    widget key, so whatever a page last held cannot outvote the View picked on
+    another. A first run adopts a preset widget value (tools/apptest_smoke).
+    """
+    if GRAIN_SHADOW not in st.session_state:
+        st.session_state[GRAIN_SHADOW] = st.session_state.get(key) or "annual"
+    st.session_state[key] = st.session_state[GRAIN_SHADOW]
+    c3, _ = st.columns([2.2, 3.7], vertical_alignment="bottom")
     with c3:
         grain = st.segmented_control(
             "View",
             options=list(GRAIN_LABELS),
             format_func=lambda g: GRAIN_LABELS[g],
-            default="annual",
-            key="grain",
+            key=key,
+            on_change=_keep_grain,
+            args=(key,),
         ) or "annual"
+    return grain
 
-    for vintage, role in ((forecast, "forecast"), (comp, "comparison")):
-        if vintage and cube.is_partial(vintage):
-            months = len(cube.months_present.get(vintage, ()))
-            quarters = ", ".join(cube.quarters_present.get(vintage, ()))
-            st.warning(
-                f"**{tx.vintage_label(vintage)}** is selected as the {role} and "
-                f"is a **{months}-month partial year**: {quarters} only (no Q4), "
-                f"and its FY total is a {months}-month sum. It is not a "
-                f"like-for-like comparison against a full-year vintage."
-            )
+
+def _statement_view(
+    *,
+    grain_key: str,
+    collapsed_key: str,
+    grid_key: str,
+    rows: Sequence[tx.Row] = tx.ROWS,
+    sections: Sequence[str] = tx.SECTIONS_WITH_HEADER,
+    tooltips: Mapping[tuple[str, str], str] = tx.ROW_TOOLTIPS,
+    tiles: Sequence[tuple[str, tx.Row]] | None = None,
+    money: Callable[[float | None], str] = tx.fmt_tile,
+    subject: str = export.CONSOLIDATED,
+    drill: Mapping[tuple[str, str], str] | None = None,
+    cogs: Mapping[tuple[str, str], str] | None = None,
+) -> tuple[str, str] | None:
+    """Tiles, downloads and the statement grid. Returns a 'drill' or 'cogs'
+    click, if any.
+
+    Section and mode clicks are handled here; a drill click is returned for the
+    caller to switch page on, a cogs click for the BU page to open its detail.
+    """
+    grain = _grain_control(grain_key)
+
+    # % or $ on the change column. Set by the toggle in that column's header
+    # (a 'mode' click from interactive.statement, handled below), so it is
+    # plain session state rather than a widget value -- shared by every page.
+    delta_mode = st.session_state.get("delta_mode", "pct")
+    if delta_mode not in tx.DELTA_MODES:
+        delta_mode = st.session_state.delta_mode = "pct"
 
     st.markdown(
-        table.build_tiles(cube, forecast=forecast, comp=comp),
+        table.build_tiles(cube, forecast=forecast, comp=comp, delta_mode=delta_mode,
+                          tiles=tiles, money=money),
         unsafe_allow_html=True,
     )
 
-    if "collapsed" not in st.session_state:
-        st.session_state.collapsed = {s: False for s in tx.SECTIONS_WITH_HEADER}
+    # Built from the same periods as the grid (export.py), every row whatever
+    # is collapsed. ~26 x 42 cells, so rebuilding per run is free.
+    _, *dl_cols = st.columns([6, 1.1, 1.1], vertical_alignment="bottom")
+    for col, (label, payload, fname, mime) in zip(dl_cols, export.downloads(
+        cube, forecast=forecast, comp=comp, grain=grain,
+        delta_mode=delta_mode, pulled_at=pulled_at, rows=rows, subject=subject,
+        draft=DRAFT_LABEL,
+    )):
+        with col:
+            st.download_button(
+                label, payload, file_name=fname, mime=mime,
+                icon=":material/download:", on_click="ignore", width="stretch",
+            )
 
+    if collapsed_key not in st.session_state:
+        st.session_state[collapsed_key] = {s: False for s in sections}
+    collapsed = st.session_state[collapsed_key]
+
+    live = interactive.interactive_available()
     grid = table.build_statement(
         cube,
         forecast=forecast, comp=comp, grain=grain,
-        collapsed=st.session_state.collapsed,
+        collapsed=collapsed,
+        delta_mode=delta_mode,
+        toggle_enabled=live,
+        rows=rows, sections=sections, tooltips=tooltips,
+        # Only where the click can land: on the static path the labels would
+        # look like links and do nothing.
+        drill=drill if live else None,
+        cogs=cogs if live else None,
     )
-    clicked = interactive.statement(grid, key="statement")
+    clicked = interactive.statement(grid, key=grid_key)
 
     # Checked AFTER the render: the component-registration case only becomes
     # known once we have tried to mount it.
     reason = interactive.unavailable_reason()
     if reason:
         st.info(reason)
+        if drill:
+            # Drilling still works without the component, from these links.
+            _bu_links(None)
 
-    if clicked and clicked in st.session_state.collapsed:
-        st.session_state.collapsed[clicked] = not st.session_state.collapsed[clicked]
-        # The grid above was already rendered from the pre-click state, so the
-        # new state needs a fresh run to show. `clicked` is transient, so this
-        # cannot loop.
+    changed = False
+    if clicked:
+        kind, value = clicked
+        if kind == "toggle" and value in collapsed:
+            collapsed[value] = not collapsed[value]
+            changed = True
+        elif kind == "mode" and value in tx.DELTA_MODES and value != delta_mode:
+            st.session_state.delta_mode = value
+            changed = True
+        elif kind in ("drill", "cogs"):
+            return clicked
+    if changed:
+        # The grid -- and for a mode click the tiles and downloads above it --
+        # were already rendered from the pre-click state, so the new state
+        # needs a fresh run to show. `clicked` is transient, so this cannot
+        # loop.
         st.rerun()
+    return None
 
-# ══ Historical Trends ══════════════════════════════════════════════════════
-with tab_trends:
-    side, main = st.columns([1, 3.4], gap="medium")
 
-    with side:
-        st.markdown("**Time Period**")
-        t_grain = st.selectbox(
-            "Time period",
-            list(GRAIN_LABELS),
-            format_func=lambda g: GRAIN_LABELS[g],
-            key="t_grain",
-            label_visibility="collapsed",
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
+def consolidated_page() -> None:
+    tab_table, tab_trends = st.tabs(["Forecast Table", "Historical Trends"])
+
+    # ══ Forecast Table ═════════════════════════════════════════════════════
+    with tab_table:
+        clicked = _statement_view(
+            grain_key="grain", collapsed_key="collapsed", grid_key="statement",
+            drill=table.DRILL if bu.AVAILABLE else None,
         )
+        if clicked and clicked[1] in BU_PAGES:
+            st.switch_page(BU_PAGES[clicked[1]])
 
-        sub_items: list[str] = []
-        if t_grain == "quarterly":
-            sub_items = list(tx.QUARTERS)
-        elif t_grain == "monthly":
-            sub_items = list(tx.MONTHS)
+    # ══ Historical Trends ══════════════════════════════════════════════════
+    # Three charts: the outlook across forecasts, monthly values by forecast,
+    # and the change by business unit. All read the Forecast / vs. pair above.
+    with tab_trends:
+        m1, m2, _ = st.columns([2.2, 1.0, 2.6], vertical_alignment="bottom")
 
-        subs: list[str] = []
-        if sub_items:
-            # Porting the deck's buildSub(): keep whatever is still valid after a
-            # grain change, else fall back to the first item, and never allow the
-            # selection to empty out.
-            kept = [s for s in st.session_state.get("t_subs", []) if s in sub_items]
-            if not kept:
-                kept = [sub_items[0]]
-            st.session_state.t_subs = kept
+        with m1:
+            def _metric_label(idx: int) -> str:
+                row = tx.ROWS[idx]
+                return f"{row.section} — {row.metric_label}"
 
-            def _keep_one_selected() -> None:
-                if not st.session_state.get("t_subs"):
-                    st.session_state["t_subs"] = st.session_state.get(
-                        "subs_prev", [sub_items[0]]
-                    )
-                else:
-                    st.session_state["subs_prev"] = list(st.session_state["t_subs"])
-
-            subs = st.segmented_control(
-                "Sub-periods",
-                options=sub_items,
-                selection_mode="multi",
-                key="t_subs",
-                on_change=_keep_one_selected,
-                label_visibility="collapsed",
-            ) or kept
-
-        st.markdown("**Metric**")
-
-        def _metric_label(idx: int) -> str:
-            row = tx.ROWS[idx]
-            return f"{row.section} — {row.metric_label}"
-
-        metric_idx = st.selectbox(
-            "Metric",
-            list(range(len(tx.ROWS))),
-            index=6,                     # Total Revenue, the deck's default
-            format_func=_metric_label,
-            key="t_metric",
-            label_visibility="collapsed",
-        )
+            metric_idx = st.selectbox(
+                "Metric",
+                list(range(len(tx.ROWS))),
+                index=6,                     # Total Revenue, the deck's default
+                format_func=_metric_label,
+                key="t_metric",
+            )
+        with m2:
+            t_period = st.selectbox(
+                "Period",
+                list(tx.TREND_PERIODS),
+                format_func=charts.period_label,
+                key="t_period",
+                help="For the outlook and the bridge. The month view always "
+                     "spans Jan–Dec.",
+            )
         row = tx.ROWS[metric_idx]
 
-        st.markdown("**Periods to Display**")
-        if "t_checks" not in st.session_state:
-            newest = next((v for v in reversed(cube.vintages)
-                           if v.endswith(". FC")), None)
-            st.session_state.t_checks = {
-                v for v in ("2025A", "2026B", newest) if v and v in cube.vintages
-            }
-
-        selected_vintages: list[str] = []
-        for v in cube.vintages:
-            swatch, box = st.columns([1, 9], vertical_alignment="center")
-            with swatch:
-                st.markdown(
-                    f'<div style="width:12px;height:12px;border-radius:3px;'
-                    f'background:{tx.PERIOD_COLORS.get(v, "#4d7ab8")};'
-                    f'margin-top:6px"></div>',
-                    unsafe_allow_html=True,
-                )
-            with box:
-                if st.checkbox(
-                    tx.vintage_label(v),
-                    value=v in st.session_state.t_checks,
-                    key=f"chk_{v}",
-                ):
-                    selected_vintages.append(v)
-        st.session_state.t_checks = set(selected_vintages)
-
-    with main:
         # Gated on is_derivable, not is_live: rows 10 and 18 DO have an
         # expression, it just evaluates over a residual the source has broken,
         # and plotting it would show a 108.5% gross margin. See ISSUES.md.
@@ -271,7 +426,165 @@ with tab_trends:
                 f"from the source."
             )
         else:
+            st.markdown("#### Outlook across forecasts")
             st.altair_chart(
-                charts.build(cube, row, selected_vintages, t_grain, subs),
+                charts.outlook_chart(cube, row, forecast, comp, t_period, show_retired),
                 width="stretch",
             )
+
+            st.markdown("#### Monthly values by forecast")
+            line_opts = list(cube.visible(show_retired))
+            if ("t_lines" not in st.session_state
+                    or st.session_state.get("t_lines_for") != (forecast, comp)):
+                # A new Forecast / vs. pair starts the lines over from its
+                # default (that year's Budget, the comparison, the forecast).
+                st.session_state.t_lines = tx.default_lines(
+                    cube, forecast, comp, show_retired
+                )
+                st.session_state.t_lines_for = (forecast, comp)
+            else:
+                # Same guard as fc_sel: drop what is no longer offered.
+                st.session_state.t_lines = [
+                    v for v in st.session_state.t_lines if v in line_opts
+                ]
+            lines = st.multiselect(
+                "Lines", line_opts, key="t_lines", format_func=tx.vintage_label
+            )
+            st.altair_chart(
+                charts.months_chart(cube, row, tx.order_vintages(lines), forecast, comp),
+                width="stretch",
+            )
+
+            st.markdown("#### Change by business unit")
+            if not comp:
+                st.info("Choose a comparison in **vs.** above to see what drove "
+                        "the change.")
+            elif row.is_pct:
+                st.info("The bridge breaks a $ line into its business units. Pick "
+                        "a Revenue or EBITDA line.")
+            elif cube.same_actuals(forecast, comp, t_period):
+                st.info(f"{charts.period_label(t_period)} is actuals in both "
+                        f"{tx.vintage_label(comp)} and {tx.vintage_label(forecast)}, "
+                        f"so nothing moved.")
+            else:
+                st.altair_chart(
+                    charts.bridge_chart(cube, row, forecast, comp, t_period),
+                    width="stretch",
+                )
+
+
+def _bu_links(current: str | None) -> None:
+    """One link per BU page, the current one disabled.
+
+    Links rather than a segmented control: they hold no widget state that
+    could outlive a page switch and send a drill to the wrong BU.
+    """
+    cols = st.columns([1] * len(bu.BU_KEYS) + [2.4])
+    for col, key in zip(cols, bu.BU_KEYS):
+        with col:
+            st.page_link(BU_PAGES[key], label=bu.BU_NAMES[key],
+                         disabled=key == current)
+
+
+def bu_page(key: str) -> None:
+    """One BU's P&L: tiles, downloads and the statement, no Trends tab."""
+    with crumbs:
+        back, here = st.columns([1.3, 6], vertical_alignment="center")
+        with back:
+            st.page_link(CONSOLIDATED, label="Consolidated",
+                         icon=":material/arrow_back:")
+        with here:
+            st.markdown(f"› **{_drafted(bu.subject(key))}**")
+        _bu_links(key)
+
+    rows = bu.rows(key, cube)
+    # A per-page widget key: one key shared by the four BU pages is a different
+    # widget on each, which opens with no value and would reset the View.
+    clicked = _statement_view(
+        grain_key=f"grain_{key}", collapsed_key=f"collapsed_{key}",
+        grid_key=f"statement_{key}",
+        rows=rows, sections=bu.SECTIONS_WITH_HEADER, tooltips=bu.tooltips(key),
+        tiles=bu.tiles(rows), money=tx.fmt_tile_m, subject=bu.subject(key),
+        cogs={bu.TOTAL_COGS: key},
+    )
+    _cogs_drill(key, clicked)
+
+
+def _cogs_drill(key: str, clicked: tuple[str, str] | None) -> None:
+    """Under a BU grid: the COGS child accounts behind its Total COGS.
+
+    Opened by a click on the "Total COGS" label ('cogs'), or by a plain button
+    when the grid's clicks are off. Full year of the selected forecast's own
+    fiscal year, over the BU's base LOBs (queries.bu_base_lobs).
+    """
+    state = f"cogs_drill_{key}"
+    if clicked == ("cogs", key):
+        st.session_state[state] = True
+    if not st.session_state.get(state):
+        if interactive.unavailable_reason():
+            if st.button("Show COGS detail", key=f"cogs_open_{key}"):
+                st.session_state[state] = True
+                st.rerun()
+        return
+
+    fy = cube.fiscal_year[forecast]
+    head, close = st.columns([6, 1], vertical_alignment="bottom")
+    with head:
+        st.markdown(f"#### COGS detail — {tx.vintage_label(forecast)}, {fy}")
+    with close:
+        if st.button("Close", key=f"cogs_close_{key}", icon=":material/close:"):
+            st.session_state[state] = False
+            st.rerun()
+    try:
+        df = data.load_cogs_drill(forecast, fy, queries.bu_base_lobs(key))
+    except Exception as exc:  # noqa: BLE001 -- the grid above must stay up
+        st.error(f"COGS detail could not load: {type(exc).__name__}: {exc}")
+        return
+    view = pd.DataFrame({
+        "COGS line": df["display_label"],
+        "SORT_ORDER": df["sort_order"],
+        "Account": df["account"],
+        "Bucket": df["bucket"].map(bu.COGS_BUCKET_LABELS),
+        "$M": df["amount_mm"].round(1),
+    })
+    st.dataframe(view, hide_index=True, width="stretch")
+    st.caption(f"Total {df['amount_mm'].sum():,.1f} $M — equals Total COGS for "
+               f"{fy} above. Accounts @ CC_10000; '{queries.COGS_RESIDUAL_LABEL}' is "
+               f"COGS a LOB reports only as the parent (AC_50000), e.g. GCP "
+               f"eliminations (LB_394).")
+
+
+# Named wrappers, one per page: st.Page needs a distinct callable per page.
+def north_america_page() -> None:
+    bu_page("na")
+
+
+def international_page() -> None:
+    bu_page("intl")
+
+
+def digital_page() -> None:
+    bu_page("digital")
+
+
+def collect_page() -> None:
+    bu_page("collect")
+
+
+CONSOLIDATED = st.Page(consolidated_page, title=_tab("Consolidated"), default=True)
+_BU_FUNCS = {"na": north_america_page, "intl": international_page,
+             "digital": digital_page, "collect": collect_page}
+#: Empty under LEGACY: no BU pages are registered at all.
+BU_PAGES: dict[str, st.Page] = {
+    key: st.Page(_BU_FUNCS[key], title=_tab(bu.subject(key)), url_path=bu.URL_PATHS[key])
+    for key in bu.BU_KEYS
+} if bu.AVAILABLE else {}
+
+if __name__ == "__main__":
+    st.set_page_config(
+        page_title=_tab("Drillable P&L — Collectibles Forecast"),
+        page_icon="\U0001F4C8",
+        layout="wide",
+    )
+    render_shell()
+    st.navigation([CONSOLIDATED, *BU_PAGES.values()], position="hidden").run()

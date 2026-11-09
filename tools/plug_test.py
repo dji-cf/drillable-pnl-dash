@@ -22,7 +22,9 @@ import data  # noqa: E402
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 GRAND_TOTAL = ["seg_exem", "seg_fanlive", "seg_keylit"]
-VINTAGE = "Jul. FC"
+VINTAGE = "Jul 2026 FC"
+#: The same vintage as reference/deck_jul2026.json keys it (the deck's own name).
+DECK_VINTAGE = "Jul. FC"
 #: The deck rows the source can express -- ex-Emerging + Collect + Key Lit.
 #: Deliberately NOT row 24, which includes TCG (no segment exists for it).
 DECK_ROWS = (20, 21, 22)
@@ -45,7 +47,7 @@ def main() -> int:
         i = MONTHS.index(month)
         total = 0.0
         for row in DECK_ROWS:
-            monthly = deck[VINTAGE][row].get("monthly") or []
+            monthly = deck[DECK_VINTAGE][row].get("monthly") or []
             if i < len(monthly) and monthly[i] is not None:
                 total += float(monthly[i])
         return total

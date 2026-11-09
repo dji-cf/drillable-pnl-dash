@@ -8,6 +8,7 @@ the single most common cause of "the deploy succeeded but the app is broken".
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -24,11 +25,22 @@ def main() -> None:
     problems: list[str] = []
     checked = 0
 
+    # Another app's entrypoint need not ship with this one -- unless some module
+    # imports it (financial_app.py imports streamlit_app.py, so that one ships).
+    sources = {p.name: p.read_text(encoding="utf-8") for p in ROOT.glob("*.py")}
+    entrypoints = {
+        mf for e in entities.values()
+        if (e or {}).get("type") == "streamlit" and (mf := e.get("main_file"))
+        and not any(re.search(rf"^\s*import {Path(mf).stem}\b", src, re.M)
+                    for fname, src in sources.items() if fname != mf)
+    }
+
     for name, ent in entities.items():
         if (ent or {}).get("type") != "streamlit":
             continue
         artifacts = ent.get("artifacts") or []
         main_file = ent.get("main_file")
+        foreign = entrypoints - {main_file}
 
         if main_file and main_file not in artifacts:
             problems.append(
@@ -41,9 +53,21 @@ def main() -> None:
                 problems.append(f"{name}: MISSING {art}")
 
         # Anything the app imports must ship. Catch a new module that was added
-        # to the project but never added to the manifest.
+        # to the project but never added to the manifest. A module that another
+        # entity ships and that none of THIS entity's files import (sga.py:
+        # financial app only) need not ship here.
+        shipped_elsewhere = {
+            a for n, e in entities.items() if n != name
+            for a in ((e or {}).get("artifacts") or [])
+        }
+        own_src = "\n".join(sources.get(a, "") for a in artifacts)
         for module in sorted(ROOT.glob("*.py")):
-            if module.name not in artifacts:
+            imported = re.search(
+                rf"^\s*(import|from) {module.stem}\b", own_src, re.M)
+            if (module.name in shipped_elsewhere and not imported
+                    and module.name not in artifacts):
+                continue
+            if module.name not in artifacts and module.name not in foreign:
                 problems.append(
                     f"{name}: {module.name} exists in the project but is not in "
                     f"artifacts (add it, or move it under tools/)"

@@ -21,6 +21,9 @@ dependencies = [
     # not ship; this guarantees America/Los_Angeles resolves for the
     # data-pulled timestamp.
     "tzdata",
+    # export.py writes the Excel download with it. Write-only and pure Python,
+    # so it installs from PyPI on the container runtime with no build step.
+    "xlsxwriter",
 ]
 
 [build-system]
@@ -40,4 +43,5 @@ py-modules = [
     "interactive",
     "style",
     "charts",
+    "export",
 ]

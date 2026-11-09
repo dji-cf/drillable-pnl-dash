@@ -1,0 +1,105 @@
+{
+  "_source": "James Dillon email 2026-09-30 12:55 ET. JUL26RF + JUN26RF from 2026-07_Monthly Forecast.pdf page 9 (Current FC / Prior FC). JUN26RF cross-checked and MAY26RF from 2026-06_Monthly Forecast.pdf page 5. Columns Q1, Q2, Q3, Q4, FY (FY26, $M). GM% as whole percents. Footnote on both pages: North America Gross Margins exclude eliminations; Total Gross Margin includes eliminations.",
+  "JUL26RF": {
+    "revenue": {
+      "north_america": [652, 1289, 882, 1130, 3953],
+      "international": [140, 193, 232, 200, 765],
+      "total_physical_cards": [792, 1482, 1115, 1330, 4719],
+      "digital": [16, 19, 21, 24, 80],
+      "total_ex_emerging": [808, 1501, 1136, 1354, 4799],
+      "fanatics_collect": [64, 85, 111, 125, 385],
+      "total": [872, 1587, 1247, 1479, 5184]
+    },
+    "gm_pct": {
+      "north_america": [56, 60, 58, 53, 57],
+      "international": [47, 52, 49, 47, 49],
+      "total_physical_cards": [56, 59, 58, 54, 57],
+      "digital": [33, 33, 37, 38, 36],
+      "total_ex_emerging": [55, 59, 57, 54, 57],
+      "fanatics_collect": [37, 30, 30, 33, 32],
+      "total": [54, 58, 55, 52, 55]
+    },
+    "adj_ebitda": {
+      "north_america": [286, 674, 422, 510, 1892],
+      "international": [40, 74, 81, 53, 249],
+      "eliminations": [3, -2, 0, 1, 2],
+      "total_physical_cards": [329, 746, 504, 564, 2143],
+      "digital": [1, 1, 3, 4, 9],
+      "corporate": [-15, -25, -42, -38, -121],
+      "total_ex_emerging": [315, 722, 465, 530, 2031],
+      "fanatics_collect": [-3, -5, -2, 10, 0],
+      "key_litigation": [-10, -14, -9, -5, -38],
+      "tcg": [-1, -2, -3, -6, -12],
+      "total": [301, 700, 450, 530, 1981]
+    },
+    "adj_ebitda_pct": [34, 44, 36, 36, 38]
+  },
+  "JUN26RF": {
+    "revenue": {
+      "north_america": [652, 1239, 893, 1118, 3902],
+      "international": [140, 198, 209, 167, 714],
+      "total_physical_cards": [792, 1437, 1103, 1285, 4616],
+      "digital": [16, 19, 21, 24, 80],
+      "total_ex_emerging": [808, 1456, 1124, 1309, 4696],
+      "fanatics_collect": [64, 89, 93, 110, 356],
+      "total": [872, 1546, 1217, 1418, 5053]
+    },
+    "gm_pct": {
+      "north_america": [56, 60, 55, 54, 56],
+      "international": [47, 54, 45, 45, 48],
+      "total_physical_cards": [56, 60, 54, 55, 56],
+      "digital": [33, 33, 36, 38, 35],
+      "total_ex_emerging": [55, 60, 54, 54, 56],
+      "fanatics_collect": [37, 27, 35, 36, 34],
+      "total": [54, 58, 52, 53, 55]
+    },
+    "adj_ebitda": {
+      "north_america": [286, 644, 386, 511, 1828],
+      "international": [40, 79, 62, 34, 215],
+      "eliminations": [3, -1, -1, 0, 1],
+      "total_physical_cards": [329, 722, 447, 546, 2044],
+      "digital": [1, 2, 3, 4, 9],
+      "corporate": [-15, -24, -39, -35, -112],
+      "total_ex_emerging": [315, 700, 411, 515, 1941],
+      "fanatics_collect": [-3, -6, 0, 9, 0],
+      "key_litigation": [-10, -13, -9, -2, -33],
+      "tcg": [-1, -2, -4, -6, -14],
+      "total": [301, 678, 399, 516, 1894]
+    },
+    "adj_ebitda_pct": [34, 44, 33, 36, 37]
+  },
+  "MAY26RF": {
+    "revenue": {
+      "north_america": [652, 1246, 925, 1076, 3899],
+      "international": [140, 194, 214, 171, 718],
+      "total_physical_cards": [792, 1439, 1139, 1247, 4617],
+      "digital": [16, 19, 21, 24, 80],
+      "total_ex_emerging": [808, 1459, 1160, 1271, 4697],
+      "fanatics_collect": [64, 79, 92, 109, 344],
+      "total": [872, 1538, 1252, 1380, 5042]
+    },
+    "gm_pct": {
+      "north_america": [56, 59, 55, 55, 56],
+      "international": [47, 54, 44, 45, 48],
+      "total_physical_cards": [56, 59, 54, 55, 56],
+      "digital": [33, 32, 37, 38, 35],
+      "total_ex_emerging": [55, 59, 53, 55, 56],
+      "fanatics_collect": [37, 30, 34, 35, 34],
+      "total": [54, 57, 52, 53, 54]
+    },
+    "adj_ebitda": {
+      "north_america": [286, 631, 408, 498, 1824],
+      "international": [40, 75, 62, 38, 215],
+      "eliminations": [3, 0, -3, 1, 1],
+      "total_physical_cards": [329, 706, 468, 536, 2040],
+      "digital": [1, 2, 3, 4, 9],
+      "corporate": [-15, -22, -38, -34, -109],
+      "total_ex_emerging": [315, 686, 432, 506, 1940],
+      "fanatics_collect": [-3, -5, 0, 9, 0],
+      "key_litigation": [-10, -12, -9, -2, -33],
+      "tcg": [-1, -2, -4, -6, -13],
+      "total": [301, 667, 419, 507, 1894]
+    },
+    "adj_ebitda_pct": [34, 43, 33, 37, 38]
+  }
+}
