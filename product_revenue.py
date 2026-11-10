@@ -29,6 +29,10 @@ PENDING = "PENDING"
 # >=50M = Tentpole. Edges above 35M not confirmed by Megan yet.
 TIER_EDGES = (10e6, 25e6, 35e6, 50e6)
 TIER_NOTE = f"{PENDING} - Megan Coleman: confirm size-tier edges above $35M (35-50M, Tentpole >= 50M)."
+# Hedge COAs (e.g. 10517 "NBA - Hedge"): "other" keeps them inside Other (today's
+# numbers); "own_block" draws them as a separate "Hedge" block below Other.
+HEDGE_MODE = "other"  # "other" | "own_block"
+HEDGE_NOTE = f"{PENDING} - Megan Coleman: hedge COAs in Other or own Hedge block?"
 # Design default (nobody specified): bar labels only on segments >= 3% of the
 # bar; every segment keeps a tooltip.
 LABEL_MIN_SHARE = 0.03  # PENDING - Megan Coleman: label threshold
@@ -136,7 +140,7 @@ def pivot(df: pd.DataFrame, grain: str) -> pd.DataFrame:
         part = rel.loc[name]
         part = part.loc[part.sum(axis=1).sort_values(ascending=False).index]
         for (coa, prod), vals in part.iterrows():
-            rows.append({"License": "", "COA license": viz.license_from_coa(coa), "COA": coa,
+            rows.append({"License": name, "COA license": viz.license_from_coa(coa), "COA": coa,
                          "Product release": prod, **vals})
     rows.append({"License": TOTAL, "COA license": "", "COA": "", "Product release": "", **rel.sum()})
     out = pd.DataFrame(rows)
@@ -149,14 +153,16 @@ def render_chart(df: pd.DataFrame) -> None:
     view = st.segmented_control("View", ["License", "Size tier"], default="License",
                                 key="prodrev_view") or "License"
     by = "tier" if view == "Size tier" else "license"
-    bars = viz.bar_frame(df, by, TIER_EDGES)
+    bars = viz.bar_frame(df, by, TIER_EDGES, HEDGE_MODE)
     bars[["net_rev", "y0", "y1"]] = bars[["net_rev", "y0", "y1"]] / 1e6
     bars["mid"] = (bars["y0"] + bars["y1"]) / 2
     bar_tot = bars.groupby("quarter")["net_rev"].transform("sum")
     bars["show"] = (bars["net_rev"] / bar_tot).abs() >= LABEL_MIN_SHARE
     chips = bars.drop_duplicates("quarter")["chip"].tolist()
     segs = bars.sort_values("stack")["segment"].drop_duplicates().tolist()
-    x = alt.X("chip:N", sort=chips, title=None, axis=alt.Axis(labelAngle=0))
+    # Two-line chip label ("Q1'26" / "15.9% of FY26"); labelLimit=0 stops the cut.
+    x = alt.X("chip:N", sort=chips, title=None,
+              axis=alt.Axis(labelAngle=0, labelLimit=0, labelExpr="split(datum.label, ' · ')"))
     color = alt.Color("segment:N", sort=segs, title=view,
                       scale=alt.Scale(scheme="tableau20"))
     base = alt.Chart(bars)
@@ -174,6 +180,14 @@ def render_chart(df: pd.DataFrame) -> None:
                "NA (NASE) only - not comparable to Megan's global artifact.")
     if by == "tier":
         st.caption(TIER_NOTE)
+    if HEDGE_MODE == "own_block":
+        st.caption("Hedge COAs are drawn as their own block below Other. " + HEDGE_NOTE)
+    else:
+        summ = viz.quarter_summary(df, HEDGE_MODE)
+        neg = summ.loc[summ["other"] < 0, "quarter"].tolist()
+        if neg:
+            st.caption(f"Other is below zero in {', '.join(neg)}: it includes negative hedge "
+                       "COAs (for example NBA - Hedge). " + HEDGE_NOTE)
 
 
 def render() -> None:

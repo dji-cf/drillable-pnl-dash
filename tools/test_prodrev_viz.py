@@ -77,6 +77,46 @@ def test_tier_view_pct():
     assert abs(b.loc["10-25M", "pct"] - 0.25) < 1e-12
 
 
+def test_is_hedge():
+    assert viz.is_hedge("10517", "NBA - Hedge") is True
+    assert viz.is_hedge("10517", "  nba - HEDGE ") is True
+    assert viz.is_hedge("NBA2418", "NBA - Hedge") is False  # a release stays a release
+    assert viz.is_hedge("10003", "NFL - General") is False
+
+
+def _hedge_df():
+    rows = [("NBA2601", "NBA 2601", "FY27", "2027-01-01", 60.0),
+            ("NFL2601", "NFL 2601", "FY27", "2027-01-01", 40.0),
+            ("10003", "NFL - General", "FY27", "2027-02-01", 30.0),
+            ("10517", "NBA - Hedge", "FY27", "2027-03-01", -50.0)]
+    return pd.DataFrame(rows, columns=["coa", "product_name", "fiscal_year", "period_date", "net_rev"]).assign(
+        period_date=lambda d: pd.to_datetime(d["period_date"]))
+
+
+def test_hedge_mode_other_is_default():
+    df = _hedge_df()
+    for by in ("license", "tier"):
+        pd.testing.assert_frame_equal(viz.bar_frame(df, by, EDGES),
+                                      viz.bar_frame(df, by, EDGES, hedge_mode="other"))
+    pd.testing.assert_frame_equal(viz.quarter_summary(df), viz.quarter_summary(df, hedge_mode="other"))
+    assert viz.quarter_summary(df).iloc[0]["other"] == -20.0  # hedge inside Other
+
+
+def test_hedge_mode_own_block():
+    df = _hedge_df()
+    s = viz.quarter_summary(df, hedge_mode="own_block").iloc[0]
+    assert (s["release"], s["other"], s["hedge"], s["total"]) == (100.0, 30.0, -50.0, 80.0)
+    assert s["total"] == s["release"] + s["other"] + s["hedge"]
+    assert s["chip_pct"] == 1.0
+    b = viz.bar_frame(df, "license", EDGES, hedge_mode="own_block").set_index("segment")
+    assert b.loc["Hedge", "stack"] == -1 and b.loc["Other", "stack"] == 0
+    assert abs(b.loc["NBA", "pct"] - 0.60) < 1e-12  # 60 / 100 release, excl. Other and Hedge
+    assert abs(b.loc["Hedge", "pct"] - (-50.0 / 80.0)) < 1e-12
+    assert b["net_rev"].sum() == 80.0
+    t = viz.bar_frame(df, "tier", EDGES, hedge_mode="own_block").set_index("segment")
+    assert t.loc["Hedge", "stack"] == -1 and abs(t.loc["<10M", "pct"] - 1.0) < 1e-12
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
