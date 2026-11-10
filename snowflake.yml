@@ -123,3 +123,26 @@ entities:
       - reference/sga_mapping.csv     # Will Oswald's mapping (sga.py reads it)
       - pyproject.toml
       - .streamlit/config.toml
+  # A SEPARATE app (Maya, 2026-11-10): Megan Coleman's NA Product Revenue
+  # view on its own. Same stage, runtime and grants as the two apps above.
+  product_revenue_dash:
+    type: streamlit
+    identifier:
+      name: PRODUCT_REVENUE_DASH
+      database: ORACLE_DATA_PROD
+      schema: SANDBOX
+    title: "(DRAFT) NA Product Revenue (Megan)"
+    stage: streamlit_stage
+    runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    external_access_integrations:
+      - pypi_access_integration
+    query_warehouse: ANALYTICS_WAREHOUSE
+    main_file: product_revenue_app.py
+    artifacts:
+      - product_revenue_app.py
+      - product_revenue.py
+      - data.py
+      - queries.py
+      - pyproject.toml
+      - .streamlit/config.toml
