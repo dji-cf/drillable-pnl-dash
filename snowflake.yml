@@ -142,6 +142,7 @@ entities:
     artifacts:
       - product_revenue_app.py
       - product_revenue.py
+      - prodrev_viz.py
       - data.py
       - queries.py
       - pyproject.toml

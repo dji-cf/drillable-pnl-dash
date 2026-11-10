@@ -15,13 +15,23 @@ Coleman (FP&A); see docs/fleet/cfd-prodrev-na.md for the tie-out to her file.
 """
 from __future__ import annotations
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
 import data
+import prodrev_viz as viz
 
 NO_LICENSE = "(No license)"
 TOTAL = "Total"
+PENDING = "PENDING"
+# Megan's size tiers per COA per quarter ($): <10M, 10-25M, 25-35M, 35-50M,
+# >=50M = Tentpole. Edges above 35M not confirmed by Megan yet.
+TIER_EDGES = (10e6, 25e6, 35e6, 50e6)
+TIER_NOTE = f"{PENDING} - Megan Coleman: confirm size-tier edges above $35M (35-50M, Tentpole >= 50M)."
+# Design default (nobody specified): bar labels only on segments >= 3% of the
+# bar; every segment keeps a tooltip.
+LABEL_MIN_SHARE = 0.03  # PENDING - Megan Coleman: label threshold
 
 PRODUCT_REVENUE_SQL = """
 WITH px AS (
@@ -121,15 +131,49 @@ def pivot(df: pd.DataFrame, grain: str) -> pd.DataFrame:
         order.append(NO_LICENSE)
     rows = []
     for name in order:
-        rows.append({"License": name, "COA": "", "Product release": f"{name} total", **lic.loc[name]})
+        rows.append({"License": name, "COA license": "", "COA": "",
+                     "Product release": f"{name} total", **lic.loc[name]})
         part = rel.loc[name]
         part = part.loc[part.sum(axis=1).sort_values(ascending=False).index]
         for (coa, prod), vals in part.iterrows():
-            rows.append({"License": "", "COA": coa, "Product release": prod, **vals})
-    rows.append({"License": TOTAL, "COA": "", "Product release": "", **rel.sum()})
+            rows.append({"License": "", "COA license": viz.license_from_coa(coa), "COA": coa,
+                         "Product release": prod, **vals})
+    rows.append({"License": TOTAL, "COA license": "", "COA": "", "Product release": "", **rel.sum()})
     out = pd.DataFrame(rows)
     out[cols] = out[cols] / 1e6
     return out
+
+
+def render_chart(df: pd.DataFrame) -> None:
+    """Stacked quarterly bars (FY26 + FY27) per Megan's artifact rules, $M."""
+    view = st.segmented_control("View", ["License", "Size tier"], default="License",
+                                key="prodrev_view") or "License"
+    by = "tier" if view == "Size tier" else "license"
+    bars = viz.bar_frame(df, by, TIER_EDGES)
+    bars[["net_rev", "y0", "y1"]] = bars[["net_rev", "y0", "y1"]] / 1e6
+    bars["mid"] = (bars["y0"] + bars["y1"]) / 2
+    bar_tot = bars.groupby("quarter")["net_rev"].transform("sum")
+    bars["show"] = (bars["net_rev"] / bar_tot).abs() >= LABEL_MIN_SHARE
+    chips = bars.drop_duplicates("quarter")["chip"].tolist()
+    segs = bars.sort_values("stack")["segment"].drop_duplicates().tolist()
+    x = alt.X("chip:N", sort=chips, title=None, axis=alt.Axis(labelAngle=0))
+    color = alt.Color("segment:N", sort=segs, title=view,
+                      scale=alt.Scale(scheme="tableau20"))
+    base = alt.Chart(bars)
+    bar = base.mark_bar().encode(
+        x=x, y=alt.Y("y0:Q", title="Net Revenue $M"), y2="y1:Q", color=color,
+        tooltip=["quarter", "segment", alt.Tooltip("net_rev:Q", format=",.1f", title="$M"),
+                 alt.Tooltip("pct:Q", format=".1%"), "label"])
+    text = base.transform_filter("datum.show").mark_text(fontSize=10, color="white").encode(
+        x=x, y="mid:Q", text="label:N")
+    st.altair_chart((bar + text).properties(height=520), width="stretch")
+    pct_note = ("tier % of quarter release $ (excl. Other)" if by == "tier"
+                else "license % of quarter release $ (excl. Other); '· n' = releases, counted in peak quarter")
+    st.caption("License = first 3 letters of the COA code; other COAs are 'Other' (bottom block). "
+               f"Bar labels: {pct_note}. Chip % under each bar = quarter $ (incl. Other) / FY $. "
+               "NA (NASE) only - not comparable to Megan's global artifact.")
+    if by == "tier":
+        st.caption(TIER_NOTE)
 
 
 def render() -> None:
@@ -150,8 +194,9 @@ def render() -> None:
     if (df["fiscal_year"] == "FY27").any():
         # Maya, 2026-11-03 15:24: keep FY27, flag the gap to Megan's file.
         st.caption("FY27 is $157M below Megan's file; under review with Megan.")
+    render_chart(df)
     table = pivot(df, grain)
-    num_cols = [c for c in table.columns if c not in ("License", "COA", "Product release")]
+    num_cols = [c for c in table.columns if c not in ("License", "COA license", "COA", "Product release")]
     st.dataframe(table, hide_index=True, width="stretch",
                  column_config={c: st.column_config.NumberColumn(c, format="%.1f")
                                 for c in num_cols})
