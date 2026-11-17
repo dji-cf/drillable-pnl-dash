@@ -16,7 +16,7 @@ from license_revenue_core import LEAGUE_VIEW, REGIONS  # noqa: F401  (task const
 
 _LOBS = ", ".join(f"'{c}'" for c in REGIONS)
 SQL = f"""
-SELECT scenario_label, lob, lob_label, category, league, scenario, version, fiscal_year,
+SELECT scenario_label, lob, lob_label, category, product_group, league, scenario, version, fiscal_year,
        period, period_type, amount, hedge, unhedged
 FROM {LEAGUE_VIEW}
 WHERE pl_line = 'ACX_Net Revenue'
@@ -60,7 +60,9 @@ def render() -> None:
     parts = " | ".join(f"{r} {_m(v)}" for r, v in split.items())
     st.markdown(f"**{label}, {hedge}, {region}: {_m(split.sum())}**  ({parts})")
 
-    if region == core.DEFAULT_REGION and hedge == "Hedged" and scen[2] == "FY27":
+    if scen[2] != "FY27":
+        st.info(f"Budget artifact targets are FY27; not compared to {label}.")
+    elif region == core.DEFAULT_REGION and hedge == "Hedged":
         gaps = core.megan_gaps(split)
         if any(abs(g["gap_pct"]) > core.GAP_WARN_PCT for g in gaps):
             st.warning("View vs Megan's artifact (FY27 hedged, ex Digital): " + "; ".join(
@@ -81,6 +83,8 @@ def render() -> None:
     st.altair_chart(chart.properties(height=520), width="stretch")
     st.caption("Source: FCT_EPM.CARDPLN_PL_BY_LEAGUE_V (CardPlan, league level). Release detail "
                "(e.g. MLB Chrome) is NA only, in the Product Revenue (NA) tab.")
+    st.caption("Sports - Other (PG_10000) is the sports total in CardPlan. It is shown only when "
+               "no league split exists.")
     st.caption(f"International release-level detail: {core.P1_INTL_RELEASES}")
 
     tbl = core.license_table(sel)

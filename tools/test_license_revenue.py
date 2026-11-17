@@ -29,7 +29,9 @@ def _rows():
                          league=lg, scenario=SCEN[0], version=SCEN[1], fiscal_year=SCEN[2],
                          period="YearTotal", period_type="YEAR", amount=q * 10, hedge=-4.0,
                          unhedged=q * 10 + 4))
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    df["product_group"] = "PG_2" + df["league"]
+    return df
 
 
 def test_quarters_pivot():
@@ -73,7 +75,31 @@ def test_total_lob_never_summed():
 
 
 def test_default_scenario_fallback():
+    assert core.FALLBACK_SCENARIO == ("Plan_2026", "Final", "FY26")
     assert core.default_scenario(_rows()) == core.FALLBACK_SCENARIO
+
+
+def _grp(rows):
+    base = dict(scenario_label="BUDGET", lob="LB_302", lob_label="x", category="Sports",
+                scenario=SCEN[0], version=SCEN[1], fiscal_year=SCEN[2], period="YearTotal",
+                period_type="YEAR", hedge=0.0)
+    return pd.DataFrame([{**base, "product_group": pg, "league": lg, "amount": a, "unhedged": a}
+                         for pg, lg, a in rows])
+
+
+def test_parent_dropped_when_leagues_exist():
+    df = _grp([("PG_10000", "Sports - Other", 999.0), ("PG_20001", "NFL", 10.0),
+               ("PG_20002", "NBA", 20.0)])
+    out = core.drop_sports_parent(df)
+    assert core.SPORTS_PARENT_PG not in out["product_group"].tolist()
+    assert out["amount"].sum() == 30.0
+    assert core.region_split(core.select(df, "North America", SCEN, "Hedged")).sum() == 30.0
+
+
+def test_parent_kept_when_only_parent():
+    out = core.drop_sports_parent(_grp([("PG_10000", "Sports - Other", 999.0)]))
+    assert len(out) == 1 and out["league"].iloc[0] == core.SPORTS_TOTAL_LABEL
+    assert out["amount"].sum() == 999.0
 
 
 if __name__ == "__main__":

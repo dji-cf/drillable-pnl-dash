@@ -28,14 +28,24 @@ DEFAULT_REGION = "Global (NA+Intl)"
 HEDGE_CHOICES = {"Hedged": "amount", "Un-hedged": "unhedged"}
 QUARTERS = ["Q1", "Q2", "Q3", "Q4"]
 
-# Scenario default. The task asks for "FY27 Budget" (Plan_2027 / Final), but the
-# view has no Plan_2027 rows (STEP 1c, 2026-11-17). Until it lands, the default
-# falls back to the FY27 Rolling Forecast (Working) -- the only FY27 scenario
-# with an NA league split. One constant each, easy to change.
+# Scenario default. FY27 Budget by license is not in Snowflake (Maya Test C,
+# 2026-11-17), so the default falls back to the FY26 Budget (Maya: default B).
 PREFERRED_SCENARIO = ("Plan_2027", "Final", "FY27")
-FALLBACK_SCENARIO = ("Rolling Forecast", "Working", "FY27")
-SCENARIO_PENDING = (f"{PENDING} - Vivek Srinivasan: Plan_2027 (FY27 Budget) is not in "
-                    "CARDPLN_PL_BY_LEAGUE_V yet; showing the FY27 Rolling Forecast (Working) instead.")
+FALLBACK_SCENARIO = ("Plan_2026", "Final", "FY26")
+SCENARIO_PENDING = (f"{PENDING} - Vivek Srinivasan: FY27 Budget by license is not in Snowflake "
+                    "(CARDPLN_PL_BY_LEAGUE last loaded 2026-09-29; budget 2027B-09.28 has no league "
+                    "split). Showing the FY26 Budget (Plan_2026) instead.")
+
+# PG_10000 ("Sports - Other") is the PARENT of the sports leagues: the view adds
+# it on top of its children, so sports counts 2x (Maya Snowsight, 2026-11-17).
+# Test A, PG_10000 vs sum of category='Sports' leagues $M: Actual FY26 NA 2,530.6
+# vs 2,500.0; Plan_2026 FY26 NA 2,590.5 vs 2,576.8; Intl 541.0 vs 541.0.
+# Test B, NA with / without PG_10000 / LOB_V2: Plan_2026 FY26 5,493.2 / 2,902.7 /
+# 2,838.0; SEP26RF FY27 4,471.2 / 0.0 / 4,471.2 (only PG_10000 loaded).
+# Vivek has not confirmed yet; the rule gives the same result if he fixes the view.
+SPORTS_PARENT_PG = "PG_10000"
+SPORTS_TOTAL_LABEL = "Sports - total (no league split)"
+_GROUP = ["scenario", "version", "fiscal_year", "period_type", "period", "lob"]
 
 # Megan Coleman's artifact, FY27 hedged, ex Digital, $M (James fwd 2026-11-17).
 MEGAN_TARGETS_M = {"North America": 3976.0, "International": 1182.0}
@@ -72,8 +82,21 @@ def default_scenario(df: pd.DataFrame) -> tuple[str, str, str]:
     return PREFERRED_SCENARIO if PREFERRED_SCENARIO in have else FALLBACK_SCENARIO
 
 
+def drop_sports_parent(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop PG_10000 where a league split exists; else keep it as the sports total."""
+    is_par = df["product_group"] == SPORTS_PARENT_PG
+    has_child = (~is_par).groupby([df[c] for c in _GROUP]).transform("any")
+    out = df[~(is_par & has_child)].copy()
+    out.loc[out["product_group"] == SPORTS_PARENT_PG, "league"] = SPORTS_TOTAL_LABEL
+    return out
+
+
 def select(df: pd.DataFrame, region: str, scen: tuple[str, str, str], hedge: str) -> pd.DataFrame:
-    """Rows of one region choice x scenario, with a ``value`` column for the hedge pick."""
+    """Rows of one region choice x scenario, with a ``value`` column for the hedge pick.
+
+    drop_sports_parent runs here first, so every view of the data gets it.
+    """
+    df = drop_sports_parent(df)
     s, v, fy = scen
     out = df[(df["lob"].isin(REGION_CHOICES[region])) & (df["lob"] != TOTAL_LOB)
              & (df["scenario"] == s) & (df["version"] == v) & (df["fiscal_year"] == fy)].copy()
