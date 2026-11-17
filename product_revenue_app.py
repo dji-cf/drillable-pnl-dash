@@ -8,13 +8,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-import license_revenue
 import product_revenue
 
-st.set_page_config(page_title="(DRAFT) Product Revenue", layout="wide")
+st.set_page_config(page_title="(DRAFT) NA Product Revenue", layout="wide")
 st.markdown("**(DRAFT)** Numbers under validation. Not final.")
-tab_na, tab_lic = st.tabs(["Product Revenue (NA)", "Revenue by License (Global)"])
-with tab_na:
-    product_revenue.render()
-with tab_lic:
-    license_revenue.render()
+product_revenue.render()

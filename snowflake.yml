@@ -142,9 +142,30 @@ entities:
     artifacts:
       - product_revenue_app.py
       - product_revenue.py
+      - prodrev_viz.py
+      - data.py
+      - queries.py
+      - pyproject.toml
+      - .streamlit/config.toml
+  # A SEPARATE app (Maya, 2026-11-17): Revenue by License (Global), from FCT_EPM.CARDPLN_PL_BY_LEAGUE_V.
+  license_revenue_dash:
+    type: streamlit
+    identifier:
+      name: LICENSE_REVENUE_DASH
+      database: ORACLE_DATA_PROD
+      schema: SANDBOX
+    title: "(DRAFT) Revenue by License (Global)"
+    stage: streamlit_stage
+    runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    external_access_integrations:
+      - pypi_access_integration
+    query_warehouse: ANALYTICS_WAREHOUSE
+    main_file: license_revenue_app.py
+    artifacts:
+      - license_revenue_app.py
       - license_revenue.py
       - license_revenue_core.py
-      - prodrev_viz.py
       - data.py
       - queries.py
       - pyproject.toml

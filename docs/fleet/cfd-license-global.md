@@ -189,3 +189,38 @@ comparisons.
 Hedge check (self-check 2026-11-17, read-only SQL on PRODUCT_GROUP='PG_10000', YEAR): HEDGE = 0.0 for NA and Intl in
 Plan_2026 FY26, RF FY27 and SEP26RF FY27. So dropping PG_10000 does not move the hedge. The PG_10000 AMOUNT values
 (Plan_2026 NA 2,590.5, Intl 541.0; RF FY27 NA 4,459.7) match Maya's Test A.
+
+## Standalone app (2026-11-17)
+
+**Why:** Maya, Cowork chat 2026-11-17 ~14:35 ET: "can we publish as it's own standalone dashboard for now?" Revenue by
+License is now its OWN Streamlit app. It is not a 2nd tab in PRODUCT_REVENUE_DASH any more. **(updated 2026-11-17)**: the
+"What is built" lines above about `product_revenue_app.py:11-20` (tabs) and `snowflake.yml:145-146` are replaced by this section.
+
+**Restored (equal to live commit ae167de; `git diff ae167de -- <file>` is empty):**
+- `product_revenue_app.py`: written from `git show ae167de:product_revenue_app.py`. It has no license_revenue import, no
+  st.tabs, and page_title "(DRAFT) NA Product Revenue".
+- `snowflake.yml` entity `product_revenue_dash` (:128-149): the 2 lines `license_revenue.py` and `license_revenue_core.py` are removed.
+
+**New entity** `snowflake.yml:150-172` `license_revenue_dash`:
+- comment at :150; identifier `ORACLE_DATA_PROD.SANDBOX.LICENSE_REVENUE_DASH`; title "(DRAFT) Revenue by License (Global)";
+- the same stage, runtime, compute pool, EAI and warehouse as product_revenue_dash;
+- `main_file: license_revenue_app.py` (:164);
+- artifacts (:166-172): license_revenue_app.py, license_revenue.py, license_revenue_core.py, data.py, queries.py,
+  pyproject.toml, .streamlit/config.toml.
+
+**New entrypoint** `license_revenue_app.py`: docstring :1-4; `st.set_page_config(page_title="(DRAFT) Revenue by License")` :11;
+DRAFT line :12; `license_revenue.render()` :13.
+
+**`license_revenue.py`:**
+- :1 docstring now says "standalone app license_revenue_dash (LICENSE_REVENUE_DASH)".
+- :38 subheader is now "Revenue by License (Global)". I removed "(DRAFT)" because the page already shows the DRAFT line
+  (`license_revenue_app.py:12`). This keeps exactly one visible DRAFT label in the page body.
+
+**Import check:**
+| File | Imports | In the artifacts? |
+|---|---|---|
+| license_revenue.py | altair, pandas, streamlit, data, license_revenue_core | data.py and license_revenue_core.py: yes. altair is in pyproject.toml:19 (`"altair>=5"`) |
+| license_revenue_core.py | pandas only | – |
+| data.py | os, datetime, pandas, streamlit, queries | queries.py: yes |
+
+Neither file imports prodrev_viz.py or product_revenue.py, so those two files are not in the new entity.

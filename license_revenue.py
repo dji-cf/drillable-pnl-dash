@@ -1,4 +1,4 @@
-"""(DRAFT) Revenue by License (Global) -- 2nd tab of product_revenue_dash.
+"""(DRAFT) Revenue by License (Global) -- standalone app license_revenue_dash (LICENSE_REVENUE_DASH).
 
 Revenue per license (league) x region x quarter from ONE source, Vivek's
 FCT_EPM.CARDPLN_PL_BY_LEAGUE_V (James Dillon / Megan Coleman, 2026-11-17).
@@ -35,7 +35,7 @@ def _m(x: float) -> str:
 
 
 def render() -> None:
-    st.subheader("(DRAFT) Revenue by License (Global)")
+    st.subheader("Revenue by License (Global)")
     df = load()
     if df.empty:
         st.info(f"No rows returned from {LEAGUE_VIEW}.")
